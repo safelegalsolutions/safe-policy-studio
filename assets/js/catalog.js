@@ -366,6 +366,11 @@
       ['agr-student-services', 'Student services agreement', 'I', ['education'], 'agreement', 12],
       ['agr-patient-consent', 'Patient consent and service agreement', 'I', ['healthcare'], 'agreement', 12],
     ] },
+    // ---------------- CUSTOM (from client requests or SAFE's own drafting) ----------------
+    { id: 'CU', code: 'CU', cat: 'Custom', title: 'Custom documents', items: [
+      ['custom-policy', 'Custom policy (blank structure)', 'R'],
+      ['custom-agreement', 'Custom agreement (blank structure)', 'R', null, 'agreement', 12],
+    ] },
   ];
 
   const ITEMS = [];

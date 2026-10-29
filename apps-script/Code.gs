@@ -55,7 +55,7 @@ function getDbFile_() {
 
 function readDb_() {
   var db = JSON.parse(getDbFile_().getBlob().getDataAsString('UTF-8'));
-  db.clients = db.clients || []; db.docs = db.docs || []; db.settings = db.settings || {};
+  db.clients = db.clients || []; db.docs = db.docs || []; db.settings = db.settings || {}; db.requests = db.requests || [];
   return db;
 }
 
@@ -97,12 +97,15 @@ function doGet() {
 function doPost(e) {
   var req;
   try { req = JSON.parse(e.postData.contents); } catch (err) { return json_({ ok: false, error: 'Bad request' }); }
-  var key = PropertiesService.getScriptProperties().getProperty('API_KEY');
-  if (!key || req.key !== key) return json_({ ok: false, error: 'Invalid API key' });
+  var isPortal = /^portal/.test(String(req.action || ''));
+  if (!isPortal) {
+    var key = PropertiesService.getScriptProperties().getProperty('API_KEY');
+    if (!key || req.key !== key) return json_({ ok: false, error: 'Invalid API key' });
+  }
   var lock = LockService.getScriptLock();
   try {
     lock.waitLock(20000);
-    return json_(handle_(req));
+    return json_(isPortal ? handlePortal_(req) : handle_(req));
   } catch (err) {
     return json_({ ok: false, error: String(err && err.message || err) });
   } finally {
@@ -117,9 +120,18 @@ function handle_(req) {
       return { ok: true, quota: MailApp.getRemainingDailyQuota() };
     case 'load':
       db = readDb_();
+      db.clients = db.clients.map(function (c) {
+        if (!c.portal) return c;
+        var copy = JSON.parse(JSON.stringify(c));
+        delete copy.portal.pinHash; delete copy.portal.salt;
+        return copy;
+      });
       return { ok: true, db: db };
     case 'saveClient':
       db = readDb_();
+      var existing = db.clients.filter(function (c) { return c.id === req.client.id; })[0];
+      if (existing && existing.portal) req.client.portal = existing.portal; // portal access is changed only through setPortal
+      else delete req.client.portal;
       upsert_(db.clients, req.client);
       clientFolder_(db, req.client.id);
       writeDb_(db);
@@ -161,6 +173,27 @@ function handle_(req) {
       var f = DriveApp.getFileById(req.fileId);
       var b = f.getBlob();
       return { ok: true, name: f.getName(), mime: b.getContentType(), base64: Utilities.base64Encode(b.getBytes()) };
+    case 'setPortal':
+      db = readDb_();
+      var pc = db.clients.filter(function (c) { return c.id === req.clientId; })[0];
+      if (!pc) return { ok: false, error: 'Client not found' };
+      pc.portal = pc.portal || { id: randomToken_().slice(0, 32), createdAt: new Date().toISOString() };
+      if (req.pin) {
+        if (!/^\d{6,8}$/.test(String(req.pin))) return { ok: false, error: 'The PIN must be 6 to 8 digits.' };
+        pc.portal.salt = randomToken_().slice(0, 16);
+        pc.portal.pinHash = hashPin_(pc.portal.salt, String(req.pin));
+        pc.portal.pinSetAt = new Date().toISOString();
+      }
+      if (req.newLink) pc.portal.id = randomToken_().slice(0, 32);
+      pc.portal.enabled = req.enabled !== false;
+      writeDb_(db);
+      return { ok: true, portal: { id: pc.portal.id, enabled: pc.portal.enabled, pinSetAt: pc.portal.pinSetAt, createdAt: pc.portal.createdAt } };
+    case 'saveRequest':
+      db = readDb_();
+      upsert_(db.requests, req.request);
+      writeDb_(db);
+      if (req.notify) notifyClientOfRequest_(db, req.request);
+      return { ok: true };
     case 'runReminders':
       return { ok: true, result: runReminders_(req.dryRun === true) };
     case 'testEmail':
@@ -179,6 +212,169 @@ function upsert_(arr, obj) {
 
 function json_(o) {
   return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON);
+}
+
+// ---------------------------------------------------------------- client portal
+var PORTAL = { SESSION_SECONDS: 21600, MAX_FAILS: 5, LOCK_SECONDS: 900 };
+
+function randomToken_() { return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, ''); }
+
+function hashPin_(salt, pin) {
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + ':' + pin, Utilities.Charset.UTF_8);
+  return Utilities.base64Encode(bytes);
+}
+
+function clip_(v, n) { return String(v == null ? '' : v).slice(0, n); }
+
+function portalClient_(db, session) {
+  var cid = session ? CacheService.getScriptCache().get('sess_' + session) : null;
+  if (!cid) throw new Error('SESSION_EXPIRED');
+  var c = db.clients.filter(function (x) { return x.id === cid; })[0];
+  if (!c || !c.portal || !c.portal.enabled) throw new Error('Portal access is not available. Please contact SAFE Legal Solutions.');
+  return c;
+}
+
+function stageOf_(d) {
+  if (d.status === 'Issued') return 'Issued';
+  if (d.status === 'Archived') return d.issued ? 'Withdrawn' : 'Cancelled';
+  if (d.issued) return 'Issued – revision in progress';
+  if (d.status === 'Under review' || d.status === 'Advocate reviewed') return 'Under SAFE review';
+  return 'In preparation';
+}
+
+function portalView_(db, c) {
+  var s = settings_(db);
+  var docs = db.docs.filter(function (d) { return d.clientId === c.id; });
+  var byId = {};
+  docs.forEach(function (d) { byId[d.id] = d; });
+  return {
+    client: { name: c.name, industry: c.industry, industryOther: c.industryOther || '', states: c.states || '' },
+    contact: { email: s.safeTo },
+    docs: docs.filter(function (d) { return d.status !== 'Archived' || d.issued; }).map(function (d) {
+      return {
+        id: d.id, itemId: d.itemId, title: d.title, ref: d.ref, stage: stageOf_(d),
+        version: d.issued ? d.issued.version : null,
+        effectiveDate: d.issued ? d.issued.effectiveDate : null,
+        expiryDate: d.issued ? d.issued.expiryDate : null,
+        canDownload: !!(d.issued && d.issued.fileId)
+      };
+    }),
+    requests: db.requests.filter(function (r) { return r.clientId === c.id; }).map(function (r) {
+      return {
+        id: r.id, createdAt: r.createdAt, status: r.status, note: r.note, urgency: r.urgency, neededBy: r.neededBy,
+        safeNote: r.safeNote || '', requestedBy: r.requestedBy || {},
+        items: (r.items || []).map(function (i) {
+          var d = i.docId ? byId[i.docId] : null;
+          return { type: i.type, itemId: i.itemId, title: i.title, details: i.details, included: i.included !== false, stage: d ? stageOf_(d) : null };
+        })
+      };
+    })
+  };
+}
+
+function handlePortal_(req) {
+  var db = readDb_();
+  var cache = CacheService.getScriptCache();
+  try {
+    switch (req.action) {
+      case 'portalLogin': {
+        var pid = clip_(req.portalId, 64);
+        var failKey = 'fail_' + pid;
+        var fails = Number(cache.get(failKey) || 0);
+        if (fails >= PORTAL.MAX_FAILS) return { ok: false, error: 'Too many attempts. Please try again in 15 minutes.' };
+        var c = db.clients.filter(function (x) { return x.portal && x.portal.id === pid && x.portal.enabled && x.portal.pinHash; })[0];
+        if (!c || hashPin_(c.portal.salt, clip_(req.pin, 12)) !== c.portal.pinHash) {
+          cache.put(failKey, String(fails + 1), PORTAL.LOCK_SECONDS);
+          return { ok: false, error: 'The link or PIN is not correct.' };
+        }
+        cache.remove(failKey);
+        var token = randomToken_();
+        cache.put('sess_' + token, c.id, PORTAL.SESSION_SECONDS);
+        return { ok: true, session: token, data: portalView_(db, c) };
+      }
+      case 'portalLoad':
+        return { ok: true, data: portalView_(db, portalClient_(db, req.session)) };
+      case 'portalLogout':
+        if (req.session) cache.remove('sess_' + req.session);
+        return { ok: true };
+      case 'portalRequest': {
+        var pc = portalClient_(db, req.session);
+        var items = (req.items || []).slice(0, 300).map(function (i) {
+          return { type: 'library', itemId: clip_(i.itemId, 80), title: clip_(i.title, 300) };
+        }).filter(function (i) { return i.itemId; });
+        var custom = (req.custom || []).slice(0, 30).map(function (x) {
+          return { type: 'custom', kind: x.kind === 'agreement' ? 'agreement' : 'policy', title: clip_(x.title, 300), details: clip_(x.details, 4000) };
+        }).filter(function (x) { return x.title; });
+        if (!items.length && !custom.length) return { ok: false, error: 'Please select at least one document or describe a new one.' };
+        var by = req.requestedBy || {};
+        var r = {
+          id: 'req_' + randomToken_().slice(0, 12), clientId: pc.id, createdAt: new Date().toISOString(), status: 'New',
+          items: items.concat(custom), note: clip_(req.note, 4000), urgency: req.urgency === 'Urgent' ? 'Urgent' : 'Normal',
+          neededBy: clip_(req.neededBy, 10),
+          requestedBy: { name: clip_(by.name, 120), email: clip_(by.email, 160), phone: clip_(by.phone, 40) },
+          history: [{ at: new Date().toISOString(), by: 'Client', action: 'Submitted' }]
+        };
+        db.requests.push(r);
+        writeDb_(db);
+        notifySafeOfRequest_(db, pc, r);
+        return { ok: true, id: r.id, data: portalView_(db, pc) };
+      }
+      case 'portalDownload': {
+        var dc = portalClient_(db, req.session);
+        var d = db.docs.filter(function (x) { return x.id === req.docId && x.clientId === dc.id; })[0];
+        if (!d || !d.issued || !d.issued.fileId) return { ok: false, error: 'This document is not available for download.' };
+        var f = DriveApp.getFileById(d.issued.fileId);
+        var b = f.getBlob();
+        return { ok: true, name: f.getName(), mime: b.getContentType(), base64: Utilities.base64Encode(b.getBytes()) };
+      }
+      default:
+        return { ok: false, error: 'Unknown action' };
+    }
+  } catch (err) {
+    var msg = String(err && err.message || err);
+    if (msg === 'SESSION_EXPIRED') return { ok: false, error: 'Your session has expired. Please sign in again.', expired: true };
+    return { ok: false, error: msg };
+  }
+}
+
+function requestItemsHtml_(r) {
+  return '<ul>' + (r.items || []).map(function (i) {
+    return '<li>' + (i.type === 'custom' ? '<b>New ' + esc_(i.kind || 'policy') + ':</b> ' + esc_(i.title) + (i.details ? '<br><span style="color:#555">' + esc_(i.details) + '</span>' : '') : esc_(i.title)) + '</li>';
+  }).join('') + '</ul>';
+}
+
+function notifySafeOfRequest_(db, c, r) {
+  var s = settings_(db);
+  var nLib = r.items.filter(function (i) { return i.type === 'library'; }).length;
+  var nNew = r.items.length - nLib;
+  var html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222">' +
+    '<p><b>' + esc_(c.name) + '</b> has submitted a request through the client portal' + (r.urgency === 'Urgent' ? ' <b style="color:#801425">(URGENT)</b>' : '') + '.</p>' +
+    '<p>' + nLib + ' document(s) from the library' + (nNew ? ' and ' + nNew + ' new document(s) not in the library' : '') + ':</p>' + requestItemsHtml_(r) +
+    (r.note ? '<p><b>Note from client:</b> ' + esc_(r.note) + '</p>' : '') +
+    (r.neededBy ? '<p><b>Needed by:</b> ' + fmt_(r.neededBy) + '</p>' : '') +
+    '<p><b>Requested by:</b> ' + esc_(r.requestedBy.name) + ' · ' + esc_(r.requestedBy.email) + ' · ' + esc_(r.requestedBy.phone) + '</p>' +
+    '<p>Review and approve it in the SAFE Inbox' + (s.appUrl ? ': <a href="' + esc_(s.appUrl) + '">open Policy Studio</a>' : '') + '.</p></div>';
+  MailApp.sendEmail({ to: s.safeTo, cc: s.safeCc, replyTo: r.requestedBy.email || s.safeTo, subject: (r.urgency === 'Urgent' ? '[URGENT] ' : '') + 'New policy request – ' + c.name + ' (' + r.items.length + ' items)', htmlBody: html, name: s.senderName });
+  var ackTo = r.requestedBy.email || c.reminderEmails;
+  if (ackTo) {
+    MailApp.sendEmail({ to: ackTo, replyTo: s.safeTo, subject: 'We have received your request – SAFE Legal Solutions', name: s.senderName,
+      htmlBody: '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222"><p>Dear ' + esc_(r.requestedBy.name || 'Sir / Madam') + ',</p><p>Thank you. SAFE Legal Solutions has received your request (reference ' + esc_(r.id) + ') for:</p>' + requestItemsHtml_(r) + '<p>We will review it and get back to you. You can follow its progress in your client portal.</p><p>Regards,<br>SAFE Legal Solutions<br>info@safelegal.org | +91 98861 81839 | safelegal.in</p></div>' });
+  }
+}
+
+function notifyClientOfRequest_(db, r) {
+  var s = settings_(db);
+  var c = db.clients.filter(function (x) { return x.id === r.clientId; })[0];
+  if (!c) return;
+  var to = (r.requestedBy && r.requestedBy.email) || c.reminderEmails;
+  if (!to) return;
+  var included = (r.items || []).filter(function (i) { return i.included !== false; });
+  var html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222"><p>Dear ' + esc_((r.requestedBy && r.requestedBy.name) || c.contactName || 'Sir / Madam') + ',</p>' +
+    '<p>Your request ' + esc_(r.id) + ' is now <b>' + esc_(r.status) + '</b>.</p>' +
+    (r.status === 'Approved' || r.status === 'Completed' ? '<p>Documents included:</p>' + requestItemsHtml_({ items: included }) : '') +
+    (r.safeNote ? '<p><b>Note from SAFE Legal:</b> ' + esc_(r.safeNote) + '</p>' : '') +
+    '<p>You can follow progress and download issued documents in your client portal.</p><p>Regards,<br>SAFE Legal Solutions<br>info@safelegal.org | +91 98861 81839 | safelegal.in</p></div>';
+  MailApp.sendEmail({ to: to, cc: s.safeCc, replyTo: s.safeTo, subject: 'Update on your request – ' + r.status + ' – SAFE Legal Solutions', htmlBody: html, name: s.senderName });
 }
 
 // ---------------------------------------------------------------- reminders

@@ -18,7 +18,7 @@
   const st = {
     store: null, db: null, clientId: null, tab: null, docId: null, work: null,
     lib: { q: '', cat: 'All', tags: { M: true, I: true, R: true }, relevantOnly: true, readyOnly: false, selected: new Set() },
-    docFilter: 'All', docQ: '', lhCache: {}, busy: false,
+    docFilter: 'All', docQ: '', lhCache: {}, busy: false, view: null, reqId: null, reqFilter: 'Open',
   };
 
   // ---------------------------------------------------------------- utilities
@@ -90,6 +90,8 @@
     mb.className = 'mode-badge ' + (g ? 'google' : '');
     const n = dueDocs().length;
     const dc = $('#dueCount'); dc.textContent = n; dc.hidden = !n;
+    const ni = (st.db.requests || []).filter((r) => r.status === 'New').length;
+    const ic = $('#inboxCount'); if (ic) { ic.textContent = ni; ic.hidden = !ni; }
     renderSidebar();
     renderMain();
   }
@@ -105,7 +107,8 @@
 
   function renderMain() {
     const m = $('#main');
-    if (st.docId && docById(st.docId)) m.innerHTML = viewEditor();
+    if (st.view === 'inbox') m.innerHTML = st.reqId && reqById(st.reqId) ? viewRequest() : viewInbox();
+    else if (st.docId && docById(st.docId)) m.innerHTML = viewEditor();
     else if (st.clientId && client()) m.innerHTML = viewClient();
     else m.innerHTML = viewHome();
     if (st.docId) refreshPreview();
@@ -227,6 +230,7 @@
           ${lh ? '<button class="btn danger small" data-action="remove-letterhead">Remove letterhead</button>' : ''}
         </div>
       </div>
+      ${portalCard(c)}
       <div class="row" style="margin-top:16px;justify-content:space-between">
         <button class="btn primary" data-action="save-profile">Save profile</button>
         <button class="btn danger" data-action="delete-client">Delete client</button>
@@ -387,31 +391,179 @@
     if (what === 'visible') document.querySelectorAll('#main [data-pick]:not(:disabled)').forEach((el) => L.selected.add(el.dataset.pick));
   }
 
-  async function addSelected() {
-    const c = Object.assign({}, client());
-    if (!c.short) throw new Error('Set the short code for reference numbers in the company profile first.');
+  /** Create draft documents for a client. entries: [{ itemId, customTitle?, values?, requestId? }] */
+  async function createDocs(clientId, entries) {
+    const c = Object.assign({}, st.db.clients.find((x) => x.id === clientId));
+    if (!c.short) throw new Error('Set the short code for reference numbers in the company profile of ' + (c.name || 'the client') + ' first.');
     c.serials = Object.assign({}, c.serials || {});
     const now = new Date().toISOString();
     const docs = [];
     const order = S.ITEMS.map((i) => i.id);
-    [...st.lib.selected].sort((a, b) => order.indexOf(a) - order.indexOf(b)).forEach((id) => {
-      const it = S.itemById(id);
+    entries.slice().sort((a, b) => order.indexOf(a.itemId) - order.indexOf(b.itemId)).forEach((e) => {
+      const it = S.itemById(e.itemId);
+      if (!it) return;
       const key = it.code + '-' + KIND_CODE[it.kind];
       c.serials[key] = (c.serials[key] || 0) + 1;
       const ref = `${c.short}/${it.code}/${KIND_CODE[it.kind]}/${String(c.serials[key]).padStart(3, '0')}`;
       const values = {};
-      S.fieldsFor(id).forEach((f) => { if (c.answers && c.answers[f.k] !== undefined) values[f.k] = c.answers[f.k]; });
-      docs.push({
-        id: S.uid('doc'), clientId: c.id, itemId: id, title: it.title, ref, version: '0.1', status: 'Draft',
-        values, meta: { owner: S.defaultOwner(it) }, history: [], createdAt: now, updatedAt: now,
-      });
+      S.fieldsFor(it.id).forEach((f) => { if (c.answers && c.answers[f.k] !== undefined) values[f.k] = c.answers[f.k]; });
+      Object.assign(values, e.values || {});
+      const d = {
+        id: S.uid('doc'), clientId: c.id, itemId: it.id, title: e.customTitle || it.title, customTitle: e.customTitle || '', ref, version: '0.1', status: 'Draft',
+        values, meta: { owner: S.defaultOwner(it) }, history: [], createdAt: now, updatedAt: now, requestId: e.requestId || null,
+      };
+      e.docId = d.id;
+      docs.push(d);
     });
     await st.store.saveClient(c);
-    await st.store.saveDocs(docs);
+    if (docs.length) await st.store.saveDocs(docs);
+    return docs;
+  }
+
+  async function addSelected() {
+    const docs = await createDocs(st.clientId, [...st.lib.selected].map((id) => ({ itemId: id })));
     st.lib.selected.clear();
     st.tab = 'documents';
     toast(docs.length + ' documents added', 'ok');
     renderAll();
+  }
+
+  // ---------------------------------------------------------------- client portal access
+  function portalLink(c) {
+    if (st.store.mode !== 'google' || !c.portal) return '';
+    const base = location.href.split('#')[0].split('?')[0].replace(/[^/]*$/, '');
+    return `${base}portal.html?d=${encodeURIComponent(st.store.deploymentId())}&p=${encodeURIComponent(c.portal.id)}`;
+  }
+
+  function portalCard(c) {
+    if (st.store.mode !== 'google') {
+      return `<div class="card"><h3>Client portal</h3><p class="muted small">Clients can sign in to choose policies, request new ones and download issued documents. The portal needs the Google backend: connect it in <button class="link-btn" data-action="open-settings">Settings</button>.</p></div>`;
+    }
+    const p = c.portal;
+    if (!p || !p.enabled) {
+      return `<div class="card"><h3>Client portal</h3><p class="muted small">Give ${esc(c.name)} its own portal to choose policies from the library, request policies that are not listed, follow progress and download issued documents. Requests come to the SAFE Inbox for approval.</p>
+        ${!c.reminderEmails ? '<p class="notice warn small">Add the company email for reminders first; portal acknowledgements go there if the requester gives no email.</p>' : ''}
+        <button class="btn primary" data-action="portal-enable">${p ? 'Re-enable portal with a new PIN' : 'Enable client portal'}</button></div>`;
+    }
+    return `<div class="card"><h3>Client portal <span class="status Issued">Active</span></h3>
+      <label class="field">Portal link (send this with the PIN)<input class="input" readonly value="${esc(portalLink(c))}" id="portalLinkField"></label>
+      <p class="small muted">PIN last set ${p.pinSetAt ? S.fmtDate(p.pinSetAt.slice(0, 10)) : '—'}. For security the PIN is not stored in readable form; reset it if the client has lost it.</p>
+      <div class="row"><button class="btn small" data-action="portal-copy">Copy link</button><button class="btn small" data-action="portal-reset">Reset PIN</button><button class="btn small" data-action="portal-newlink">New link + PIN</button><button class="btn small danger" data-action="portal-disable">Disable portal</button></div></div>`;
+  }
+
+  async function portalSet(opts, title) {
+    const c = client();
+    const pin = opts.pin === undefined ? String(Math.floor(100000 + Math.random() * 900000)) : opts.pin;
+    const send = Object.assign({ enabled: true }, opts);
+    if (pin) send.pin = pin;
+    await st.store.setPortal(c.id, send);
+    renderAll();
+    if (send.enabled === false) { toast('Portal disabled – the client can no longer sign in', 'ok'); return; }
+    const link = portalLink(client());
+    const msg = `Dear ${c.contactName || 'Sir / Madam'},\n\nSAFE Legal Solutions has set up a client portal for ${c.name}. You can use it to choose the policies and agreements you need, request any that are not listed, follow progress and download your issued documents.\n\nPortal link: ${link}\nPIN: ${pin}\n\nPlease keep the PIN confidential.\n\nRegards,\nSAFE Legal Solutions\ninfo@safelegal.org | +91 98861 81839`;
+    openModal(title, `<p>Send the link and PIN to the client. <b>The PIN is shown only now.</b></p>
+      <div class="grid2"><label class="field span2">Link<input class="input" readonly value="${esc(link)}"></label><label class="field">PIN<input class="input" readonly value="${esc(pin)}" style="font-size:20px;letter-spacing:4px;font-weight:700"></label></div>
+      <label class="field" style="margin-top:10px">Message to send<textarea class="input" rows="11" id="portalMsg" readonly>${esc(msg)}</textarea></label>
+      <div class="modal-actions"><button class="btn" data-action="portal-copy-msg">Copy message</button><a class="btn primary" href="mailto:${esc(c.reminderEmails || '')}?subject=${encodeURIComponent('Your SAFE Legal client portal')}&body=${encodeURIComponent(msg)}">Open in email</a></div>`);
+  }
+
+  // ---------------------------------------------------------------- SAFE Inbox
+  const REQ_STATUSES = ['New', 'In review', 'Approved', 'Declined', 'Completed'];
+  const reqById = (id) => (st.db.requests || []).find((r) => r.id === id) || null;
+  const clientName = (id) => (st.db.clients.find((c) => c.id === id) || {}).name || '(deleted client)';
+
+  function viewInbox() {
+    const all = (st.db.requests || []).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const filters = ['Open', 'All'].concat(REQ_STATUSES);
+    const match = (r) => st.reqFilter === 'All' || (st.reqFilter === 'Open' ? (r.status === 'New' || r.status === 'In review') : r.status === st.reqFilter);
+    const count = (f) => all.filter((r) => f === 'All' || (f === 'Open' ? (r.status === 'New' || r.status === 'In review') : r.status === f)).length;
+    const list = all.filter(match);
+    return `<div class="page-head"><div><div class="eyebrow">Client requests</div><h1>SAFE Inbox</h1><div class="muted small">Policies and agreements requested by clients through their portal.</div></div>
+      <button class="btn" data-action="inbox-refresh">Refresh</button></div>
+      <div class="chips" style="margin-bottom:12px">${filters.map((f) => `<button class="chip ${st.reqFilter === f ? 'on' : ''}" data-action="req-filter" data-f="${f}">${f} (${count(f)})</button>`).join('')}</div>
+      <div class="card" style="padding:0"><div class="table-wrap"><table class="table"><thead><tr><th>Received</th><th>Client</th><th>Requested</th><th>By</th><th>Status</th><th></th></tr></thead><tbody>
+      ${list.map((r) => {
+        const nLib = r.items.filter((i) => i.type === 'library').length; const nNew = r.items.length - nLib;
+        return `<tr><td class="small">${S.fmtDate(r.createdAt.slice(0, 10))}${r.urgency === 'Urgent' ? '<br><span class="status Declined">Urgent</span>' : ''}</td><td><b>${esc(clientName(r.clientId))}</b></td>
+        <td>${nLib} from library${nNew ? `, <b>${nNew} new</b>` : ''}${r.neededBy ? `<div class="muted small">Needed by ${S.fmtDate(r.neededBy)}</div>` : ''}</td>
+        <td class="small">${esc((r.requestedBy || {}).name || '')}<br><span class="muted">${esc((r.requestedBy || {}).email || '')}</span></td>
+        <td><span class="status req-${esc(r.status.replace(/\s/g, ''))}">${esc(r.status)}</span></td><td><button class="btn small" data-action="open-req" data-id="${r.id}">Open</button></td></tr>`;
+      }).join('') || `<tr><td colspan="6" class="muted">${st.store.mode === 'google' ? 'No requests here.' : 'Client requests arrive here once the Google backend is connected and a client portal is enabled.'}</td></tr>`}
+      </tbody></table></div></div>`;
+  }
+
+  function viewRequest() {
+    const r = reqById(st.reqId);
+    const c = st.db.clients.find((x) => x.id === r.clientId);
+    const ind = industryOf(c);
+    const have = new Set(clientDocs(r.clientId).map((d) => d.itemId));
+    const done = r.status === 'Approved' || r.status === 'Completed' || r.status === 'Declined';
+    const rows = r.items.map((i, idx) => {
+      const it = i.type === 'library' ? S.itemById(i.itemId) : null;
+      const doc = i.docId ? docById(i.docId) : null;
+      const already = it && have.has(it.id) && !i.docId;
+      const checked = i.included !== false && !already;
+      return `<div class="lib-item"><input type="checkbox" data-reqitem="${idx}" ${checked ? 'checked' : ''} ${done ? 'disabled' : ''}>
+        <span>${i.type === 'custom' ? `<b>New ${esc(i.kind || 'policy')}:</b> ` : ''}${esc(i.title)}${i.details ? `<div class="muted small">${esc(i.details)}</div>` : ''}${already ? '<div class="small exp-warn">Already in this client\'s documents</div>' : ''}${i.type === 'custom' && !done ? `<div class="row small" style="margin-top:4px">Create as <select class="input" style="width:auto;padding:2px 6px" data-reqkind="${idx}"><option value="custom-policy" ${i.kind !== 'agreement' ? 'selected' : ''}>custom policy</option><option value="custom-agreement" ${i.kind === 'agreement' ? 'selected' : ''}>custom agreement</option>${S.ITEMS.filter((x) => x.cat !== 'Custom').map((x) => `<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select></div>` : ''}</span>
+        <span class="meta">${it ? `<span class="tag ${it.tag}">${it.tag}</span>${S.isRelevant(it, ind) ? '' : '<span class="badge skeleton">Not typical for industry</span>'}` : '<span class="badge added">Not in library</span>'}${doc ? `<button class="btn small" data-action="open-doc" data-id="${doc.id}" data-client="${doc.clientId}">${esc(doc.status)}</button>` : ''}</span></div>`;
+    }).join('');
+    const hist = (r.history || []).slice().reverse().map((h) => `<li>${S.fmtDate(h.at.slice(0, 10))} – ${esc(h.by)}: ${esc(h.action)}</li>`).join('');
+    return `<div class="page-head"><div><button class="link-btn" data-action="inbox-back">← SAFE Inbox</button>
+        <div class="eyebrow">Request ${esc(r.id)}</div><h1>${esc(c ? c.name : '(deleted client)')}</h1>
+        <div class="muted small">Received ${S.fmtDate(r.createdAt.slice(0, 10))} · <span class="status req-${esc(r.status.replace(/\s/g, ''))}">${esc(r.status)}</span>${r.urgency === 'Urgent' ? ' · <b>Urgent</b>' : ''}${r.neededBy ? ' · needed by ' + S.fmtDate(r.neededBy) : ''}</div></div>
+        ${c ? `<button class="btn" data-action="open-client" data-id="${c.id}">Open client</button>` : ''}</div>
+      <div class="editor" style="grid-template-columns:1fr minmax(280px,360px)">
+        <div class="card"><h3>Requested documents (${r.items.length})</h3>
+          <p class="muted small">${done ? 'This request has been ' + esc(r.status.toLowerCase()) + '.' : 'Untick anything you will not take up. Approving adds the ticked items to the client as drafts, and new requests as custom documents.'}</p>
+          <div style="border:1px solid var(--line);border-radius:8px">${rows}</div></div>
+        <div>
+          <div class="card"><h3>From the client</h3>
+            <p class="small"><b>${esc((r.requestedBy || {}).name || '')}</b><br>${esc((r.requestedBy || {}).email || '')}<br>${esc((r.requestedBy || {}).phone || '')}</p>
+            ${r.note ? `<p class="small" style="white-space:pre-wrap">${esc(r.note)}</p>` : '<p class="muted small">No note.</p>'}</div>
+          <div class="card"><h3>Response</h3>
+            <label class="field">Note to the client (shown in their portal and email)<textarea class="input" id="reqNote" rows="4">${esc(r.safeNote || '')}</textarea></label>
+            <label class="small"><input type="checkbox" id="reqNotify" checked> Email the client about this update</label>
+            <div class="row" style="margin-top:10px">
+              ${r.status === 'New' ? '<button class="btn" data-action="req-status" data-to="In review">Mark in review</button>' : ''}
+              ${!done ? '<button class="btn gold" data-action="req-approve">Approve and add as drafts</button><button class="btn danger" data-action="req-status" data-to="Declined">Decline</button>' : ''}
+              ${r.status === 'Approved' ? '<button class="btn" data-action="req-status" data-to="Completed">Mark completed</button>' : ''}
+              ${done ? '<button class="btn ghost small" data-action="req-note">Send note only</button>' : ''}
+            </div></div>
+          <div class="card"><h3>History</h3><ul class="small">${hist}</ul></div>
+        </div></div>`;
+  }
+
+  async function updateRequest(mutate, action) {
+    const r = JSON.parse(JSON.stringify(reqById(st.reqId)));
+    const note = $('#reqNote') ? $('#reqNote').value.trim() : r.safeNote;
+    const notify = $('#reqNotify') ? $('#reqNotify').checked : false;
+    r.safeNote = note;
+    await mutate(r);
+    r.history = (r.history || []).concat([{ at: new Date().toISOString(), by: 'SAFE', action }]);
+    r.updatedAt = new Date().toISOString();
+    await st.store.saveRequest(r, notify && st.store.mode === 'google');
+    toast(action + (notify && st.store.mode === 'google' ? ' – client emailed' : ''), 'ok');
+    renderAll();
+  }
+
+  async function approveRequest() {
+    await updateRequest(async (r) => {
+      const entries = [];
+      document.querySelectorAll('[data-reqitem]').forEach((cb) => { r.items[+cb.dataset.reqitem].included = cb.checked; });
+      r.items.forEach((i, idx) => {
+        if (i.included === false || i.docId) return;
+        if (i.type === 'library') entries.push({ itemId: i.itemId, ref: i, requestId: r.id });
+        else {
+          const sel = document.querySelector(`[data-reqkind="${idx}"]`);
+          const target = sel ? sel.value : (i.kind === 'agreement' ? 'custom-agreement' : 'custom-policy');
+          entries.push({ itemId: target, customTitle: /^custom-/.test(target) ? i.title : '', values: /^custom-/.test(target) ? { customPurpose: i.details || '' } : {}, ref: i, requestId: r.id });
+        }
+      });
+      if (!entries.length) throw new Error('Nothing is ticked to add. Use Decline if you will not take up this request.');
+      await createDocs(r.clientId, entries);
+      entries.forEach((e) => { e.ref.docId = e.docId; });
+      r.status = 'Approved';
+    }, 'Approved');
   }
 
   // ---------------------------------------------------------------- documents register
@@ -874,10 +1026,24 @@
     if (!el) { if (e.target.id === 'modal') closeModal(); return; }
     const a = el.dataset.action;
     const H = {
-      'go-home': () => { st.clientId = null; st.docId = null; st.work = null; renderAll(); },
-      'new-client': newClientDialog,
+      'go-home': () => { st.view = null; st.clientId = null; st.docId = null; st.work = null; renderAll(); },
+      'open-inbox': () => { st.view = 'inbox'; st.reqId = null; st.docId = null; st.work = null; renderAll(); },
+      'inbox-back': () => { st.reqId = null; renderAll(); },
+      'inbox-refresh': () => run(async () => { st.db = await st.store.load(); renderAll(); toast('Inbox refreshed', 'ok'); }),
+      'req-filter': () => { st.reqFilter = el.dataset.f; renderMain(); },
+      'open-req': () => { st.view = 'inbox'; st.reqId = el.dataset.id; renderAll(); window.scrollTo(0, 0); },
+      'req-status': () => run(() => updateRequest(async (r) => { r.status = el.dataset.to; }, el.dataset.to === 'In review' ? 'Marked in review' : el.dataset.to)),
+      'req-note': () => run(() => updateRequest(async () => {}, 'Note sent')),
+      'req-approve': () => run(approveRequest),
+      'portal-enable': () => run(() => portalSet({}, 'Client portal enabled')),
+      'portal-reset': () => run(() => portalSet({}, 'PIN reset')),
+      'portal-newlink': () => run(async () => { if (!confirm('Create a new link and PIN? The old link will stop working.')) return; await portalSet({ newLink: true }, 'New link and PIN'); }),
+      'portal-disable': () => run(async () => { if (!confirm('Disable the portal? The client will not be able to sign in.')) return; await portalSet({ enabled: false, pin: '' }, ''); }),
+      'portal-copy': () => { const f = $('#portalLinkField'); navigator.clipboard.writeText(f.value).then(() => toast('Link copied', 'ok'), () => { f.select(); }); },
+      'portal-copy-msg': () => { const f = $('#portalMsg'); navigator.clipboard.writeText(f.value).then(() => toast('Message copied', 'ok'), () => { f.select(); }); },
+      'new-client': () => { st.view = null; newClientDialog(); },
       'create-client': () => run(createClient),
-      'open-client': () => { st.clientId = el.dataset.id; st.docId = null; st.work = null; st.tab = null; st.lib.selected.clear(); renderAll(); $('#main').focus(); },
+      'open-client': () => { st.view = null; st.reqId = null; st.clientId = el.dataset.id; st.docId = null; st.work = null; st.tab = null; st.lib.selected.clear(); renderAll(); $('#main').focus(); },
       'tab': () => { st.tab = el.dataset.tab; st.docId = null; renderAll(); },
       'save-profile': () => run(() => saveProfile()),
       'delete-client': () => run(async () => {
@@ -899,7 +1065,7 @@
       'lib-select': () => { libSelect(el.dataset.what); renderMain(); },
       'lib-add': () => run(addSelected),
       'doc-filter': () => { st.docFilter = el.dataset.status; renderMain(); },
-      'open-doc': () => { if (el.dataset.client) st.clientId = el.dataset.client; closeModal(); st.docId = el.dataset.id; st.work = null; renderAll(); window.scrollTo(0, 0); },
+      'open-doc': () => { st.view = null; if (el.dataset.client) st.clientId = el.dataset.client; closeModal(); st.docId = el.dataset.id; st.work = null; renderAll(); window.scrollTo(0, 0); },
       'back-to-client': () => { st.docId = null; st.work = null; st.tab = 'documents'; renderAll(); },
       'download-doc': () => run(() => downloadDoc(el.dataset.id)),
       'download-version': () => run(() => downloadVersion(Number(el.dataset.idx))),

@@ -209,7 +209,7 @@
     return {
       values, company, doc: meta, labels, item, tplDef, defaulted,
       industry: { id: industry.id, name: company.industryName, group: industry.group || '', tags: industry.tags || [], reg: (client.regulators ? String(client.regulators).split(',').map((s) => s.trim()) : industry.reg) || [] },
-      docTitle: item.title,
+      docTitle: (doc && doc.customTitle) || item.title,
     };
   };
 

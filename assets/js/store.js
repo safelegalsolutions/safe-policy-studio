@@ -50,6 +50,7 @@
     constructor() { this.mode = 'local'; this.db = null; }
     async load() {
       this.db = (await kvGet('db')) || { clients: [], docs: [], settings: {} };
+      this.db.requests = this.db.requests || [];
       return this.db;
     }
     async _save() { await kvSet('db', this.db); }
@@ -62,6 +63,8 @@
     async putFile({ name, mime, data }) { const id = S.uid('file'); await kvSet('file:' + id, { name, mime, b64: S.bufToB64(data) }); return { fileId: id }; }
     async getFile(fileId) { const f = await kvGet('file:' + fileId); if (!f) throw new Error('File not found in this browser'); return { name: f.name, mime: f.mime, data: S.b64ToBuf(f.b64) }; }
     async runReminders() { throw new Error('Reminder emails need the Google backend. Connect it in Settings.'); }
+    async saveRequest(r) { this.db.requests = this.db.requests || []; upsert(this.db.requests, r); await this._save(); return r; }
+    async setPortal() { throw new Error('The client portal needs the Google backend. Connect it in Settings first.'); }
     async exportAll() { return JSON.stringify(this.db, null, 2); }
   }
 
@@ -80,7 +83,15 @@
       if (!out.ok) throw new Error(out.error || 'Backend error');
       return out;
     }
-    async load() { const r = await this.call('load'); this.db = r.db; this.db.clients = this.db.clients || []; this.db.docs = this.db.docs || []; this.db.settings = this.db.settings || {}; return this.db; }
+    async load() { const r = await this.call('load'); this.db = r.db; this.db.clients = this.db.clients || []; this.db.docs = this.db.docs || []; this.db.settings = this.db.settings || {}; this.db.requests = this.db.requests || []; return this.db; }
+    async saveRequest(r, notify) { await this.call('saveRequest', { request: r, notify: !!notify }); upsert(this.db.requests, r); return r; }
+    async setPortal(clientId, opts) {
+      const r = await this.call('setPortal', Object.assign({ clientId }, opts || {}));
+      const c = this.db.clients.find((x) => x.id === clientId);
+      if (c) c.portal = r.portal;
+      return r.portal;
+    }
+    deploymentId() { const m = /\/macros\/s\/([^/]+)\//.exec(this.url); return m ? m[1] : ''; }
     async saveClient(c) { await this.call('saveClient', { client: c }); upsert(this.db.clients, c); return c; }
     async deleteClient(id) { await this.call('deleteClient', { id }); this.db.clients = this.db.clients.filter((c) => c.id !== id); this.db.docs = this.db.docs.filter((d) => d.clientId !== id); }
     async saveDoc(d) { await this.call('saveDoc', { doc: d }); upsert(this.db.docs, d); return d; }
