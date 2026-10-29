@@ -247,7 +247,7 @@ function runReminders_(dryRun) {
     var html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222">' +
       '<p>Dear ' + esc_(client.contactName || 'Sir / Madam') + ',</p>' +
       '<p>The following policies and documents of <b>' + esc_(client.name) + '</b> are due for review and renewal. Please let us know if there have been any changes in your business, headcount or locations so that we can update them before the expiry date.</p>' +
-      '<table style="border-collapse:collapse;font-size:13px"><tr style="background:#1F3864;color:#fff"><th style="padding:6px;text-align:left">Document</th><th style="padding:6px;text-align:left">Reference</th><th style="padding:6px;text-align:left">Version</th><th style="padding:6px;text-align:left">Expiry date</th><th style="padding:6px;text-align:left">Status</th></tr>' + rows + '</table>' +
+      '<table style="border-collapse:collapse;font-size:13px"><tr style="background:#801425;color:#fff"><th style="padding:6px;text-align:left">Document</th><th style="padding:6px;text-align:left">Reference</th><th style="padding:6px;text-align:left">Version</th><th style="padding:6px;text-align:left">Expiry date</th><th style="padding:6px;text-align:left">Status</th></tr>' + rows + '</table>' +
       '<p>You will receive this reminder every week until the documents are renewed.</p>' +
       '<p>Regards,<br>SAFE Legal Solutions<br>info@safelegal.org | +91 98861 81839 | safelegal.in</p>' +
       (s.appUrl ? '<p style="font-size:11px;color:#888">Internal: <a href="' + esc_(s.appUrl) + '">open Policy Studio</a></p>' : '') +
