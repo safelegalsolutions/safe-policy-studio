@@ -36,6 +36,42 @@ Each client can have its own portal (`portal.html`), which needs the Google back
   The client is emailed about each update and sees your note in the portal.
 - **Security:** the portal only returns that client's own data. The PIN is hashed with a salt. Five wrong PINs lock sign-in for 15 minutes. Sessions expire after 6 hours. Downloads are only possible for that client's issued documents. Studio functions still need the API key.
 
+## AI features (Claude) and law watch
+
+AI suggests; an advocate approves. Nothing AI-generated reaches a client without SAFE's action.
+
+- **Draft with AI** (studio, on structure-only documents): writes the purpose and operative provisions for the client's industry, states and headcount. Gaps appear as yellow placeholders, and the document stays a Draft until reviewed and issued.
+- **✨ Legal wording** (studio, under every text box in a document): turns rough notes into properly drafted clauses. **Undo** restores your text.
+- **AI recommendations** (studio → client profile): suggests the policies the client should have, with the legal reason for each. Tick, then **Publish to client portal** to show them as "★ Recommended for you".
+- **Law updates** (top bar): a daily job at about 7 a.m. IST reads the official feeds (SEBI, PIB, RBI by default; editable in Settings → AI). Claude screens new items, summarises relevant ones and suggests the affected policies. SAFE gets an email. Use **+ Add a law change** to paste circulars from sources without feeds (IRDAI, Labour Ministry, MeitY, CERT-In). **Approve and flag documents** marks every client document of those types with "⚠ Law change"; you can also email affected clients. Flags clear when the document is reviewed or re-issued.
+- **Client portal:**
+  - **Ask a question:** answers come only from the client's issued policies, with an AI disclaimer and a "Send this question to SAFE Legal" button. Questions arrive in the Inbox.
+  - **✨ Improve wording:** in the new-policy request form.
+  - **Change-in-law notices:** shown on affected documents.
+  - Limits: 40 questions and 40 rewrites per client every 6 hours. Both can be switched off in Settings → AI.
+
+### Set up the Claude API key
+
+1. Go to <https://console.anthropic.com> and sign in. You can use SAFE's existing account.
+2. **Settings → API keys → Create key**, named for example `SAFE Policy Studio`. Copy it; it starts with `sk-ant-`. A separate key from other apps is recommended, so costs are tracked separately and one can be revoked without affecting the other.
+3. Under **Billing**, add credit and set a monthly spend limit.
+4. In the studio: **Settings → Open AI and law watch settings → paste the key → Save and test key**. The key is stored only in the Google backend's Script Properties and is never shown again or sent to a browser.
+5. Click **Prepare issued documents for client questions** once, so that documents issued before this update can be used for answers. New issues are prepared automatically.
+
+### Backend update for AI (one time)
+
+The AI needs permission to call an external service:
+
+1. In Apps Script, replace **both** `Code.gs` and `appsscript.json` with the new versions. Make sure "Show appsscript.json" is ticked in Project Settings.
+2. Select `setup` and click **Run**. Google asks you to approve the new permission, "Connect to an external service"; click **Allow**.
+3. Click **Deploy → Manage deployments → pencil → New version → Deploy**.
+
+### Privacy and accuracy
+
+- **What goes to Claude:** policy text, law texts and the client's business profile (industry, states, headcount), plus anything typed into the AI boxes. Don't type employees' personal details into them.
+- **Anthropic's handling:** Anthropic does not train on API data by default; check its current commercial terms.
+- **Accuracy:** AI can misread a circular or miss a change. Treat the law watch as an aid to SAFE's own monitoring, and always check the source before approving.
+
 ## Files
 
 ```

@@ -20,7 +20,7 @@
   const st = {
     session: null, data: null, tab: 'choose', busy: false,
     q: '', cat: 'All', relevantOnly: true,
-    selected: new Set(), custom: [],
+    selected: new Set(), custom: [], answer: null, asking: false, undoText: null,
   };
 
   // ---------------------------------------------------------------- helpers
@@ -61,11 +61,14 @@
     if (!st.data) { m.innerHTML = viewLogin(); const f = $('#pin'); if (f) f.focus(); return; }
     const d = st.data;
     const openReq = d.requests.filter((r) => r.status === 'New' || r.status === 'In review').length;
-    const tabs = [['choose', 'Choose policies'], ['new', '+ Request a new policy'], ['requests', `My requests${d.requests.length ? ' (' + d.requests.length + ')' : ''}`], ['docs', `My documents${d.docs.length ? ' (' + d.docs.length + ')' : ''}`]];
+    const flagged = d.docs.filter((x) => (x.lawFlags || []).length).length;
+    const tabs = [['choose', 'Choose policies'], ['new', '+ Request a new policy'], ['requests', `My requests${d.requests.length ? ' (' + d.requests.length + ')' : ''}`], ['docs', `My documents${d.docs.length ? ' (' + d.docs.length + ')' : ''}${flagged ? ' ⚠' : ''}`]];
+    if (d.features && d.features.ask) tabs.push(['ask', 'Ask a question']);
     let body = '';
     if (st.tab === 'new') body = viewNew();
     else if (st.tab === 'requests') body = viewRequests();
     else if (st.tab === 'docs') body = viewDocs();
+    else if (st.tab === 'ask') body = viewAsk();
     else body = viewChoose();
     const basket = st.selected.size + st.custom.length;
     m.innerHTML = `
@@ -99,7 +102,17 @@
     const cats = S.CATEGORIES.filter((c) => c !== 'Custom');
     const match = (it) => it.cat !== 'Custom' && (st.cat === 'All' || it.cat === st.cat) && (!st.relevantOnly || S.isRelevant(it, ind))
       && (!q || (it.title + ' ' + it.sectionTitle + ' ' + it.cat + ' ' + (it.keywords || '')).toLowerCase().includes(q));
-    let html = `<div class="card">
+    const recos = (st.data.recommendations || []).filter((x) => !x.off && S.itemById(x.id));
+    const recoSet = new Set(recos.map((x) => x.id));
+    let html = '';
+    if (recos.length && !st.q) {
+      html += `<div class="card reco-card"><div class="spread"><div><h3>★ Recommended for you by SAFE Legal</h3><div class="small muted">Based on your industry, locations and size. Each comes with the reason it applies to you.</div></div><button class="btn small primary" data-action="pick-reco">Select all recommended</button></div>
+        <div style="margin-top:10px">${recos.map((x) => {
+          const it = S.itemById(x.id); const doc = docForItem(x.id); const pend = !doc && pendingForItem(x.id); const lock = !!doc || pend;
+          return `<label class="lib-item" style="background:#fff;border-radius:6px;margin-bottom:6px"><input type="checkbox" data-pick="${it.id}" ${lock ? 'disabled' : ''} ${st.selected.has(it.id) || lock ? 'checked' : ''}><span><b>${esc(it.title)}</b>${x.priority === 'high' ? ' <span class="badge added">High priority</span>' : ''}<div class="small muted">${esc(x.reason)}</div></span><span class="meta"><span class="tag ${it.tag}" title="${esc(TAG_TEXT[it.tag])}">${it.tag}</span>${doc ? `<span class="badge added">${esc(doc.stage)}</span>` : pend ? '<span class="badge ready">Requested</span>' : ''}</span></label>`;
+        }).join('')}</div></div>`;
+    }
+    html += `<div class="card">
       <div class="lib-toolbar" style="grid-template-columns:1.5fr 1fr">
         <input class="input" type="search" placeholder="Search policies and agreements" value="${esc(st.q)}" data-f="q">
         <select class="input" data-f="cat"><option ${st.cat === 'All' ? 'selected' : ''}>All</option>${cats.map((c) => `<option ${st.cat === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
@@ -126,7 +139,7 @@
           const pend = !doc && pendingForItem(it.id);
           const lock = !!doc || pend;
           html += `<label class="lib-item"><input type="checkbox" data-pick="${it.id}" ${lock ? 'disabled' : ''} ${st.selected.has(it.id) || lock ? 'checked' : ''}>
-            <span>${esc(it.title)}${it.kind === 'agreement' ? ' <span class="muted small">(agreement)</span>' : it.kind === 'template' ? ' <span class="muted small">(letter / form)</span>' : ''}</span>
+            <span>${recoSet.has(it.id) ? '<span title="Recommended for you" style="color:var(--navy)">★</span> ' : ''}${esc(it.title)}${it.kind === 'agreement' ? ' <span class="muted small">(agreement)</span>' : it.kind === 'template' ? ' <span class="muted small">(letter / form)</span>' : ''}</span>
             <span class="meta"><span class="tag ${it.tag}" title="${esc(TAG_TEXT[it.tag])}">${it.tag}</span>${doc ? `<span class="badge added">${esc(doc.stage)}</span>` : pend ? '<span class="badge ready">Requested</span>' : ''}</span></label>`;
         });
         html += '</details>';
@@ -149,7 +162,8 @@
           <label class="field span2">Name of the policy or agreement <span class="req">*</span><input class="input" id="cTitle" maxlength="300" required placeholder="e.g. Drone operations safety policy" value="${esc(st.prefill || '')}"></label>
           <label class="field">Type<select class="input" id="cKind"><option value="policy">Policy</option><option value="agreement">Agreement</option></select></label>
           <div></div>
-          <label class="field span2">What should it cover? (purpose, who it applies to, any specific points)<textarea class="input" id="cDetails" rows="5" maxlength="4000"></textarea></label>
+          <label class="field span2">What should it cover? (purpose, who it applies to, any specific points)<textarea class="input" id="cDetails" rows="5" maxlength="4000">${esc(st.draftDetails || '')}</textarea>
+            ${st.data.features && st.data.features.wording ? `<span class="ai-row">${st.undoText !== null ? '<button type="button" class="link-btn" data-action="undo-wording">↶ Undo</button>' : ''}<button type="button" class="link-btn ai-btn" data-action="improve-wording">✨ Improve wording</button></span><span class="help">Type in your own words; "Improve wording" turns it into clear legal terms. Please don't include personal details of employees.</span>` : ''}</label>
         </div>
         <button class="btn primary" type="submit" style="margin-top:10px">Add to my request</button>
       </form>
@@ -179,10 +193,22 @@
       ${docs.map((d) => {
         const n = d.expiryDate ? daysUntil(d.expiryDate) : null;
         const exp = d.expiryDate ? `<span class="${n < 0 ? 'exp-bad' : n <= 60 ? 'exp-warn' : ''}">${fmtDate(d.expiryDate)}${n < 0 ? ' · expired' : n <= 60 ? ' · due for renewal' : ''}</span>` : '—';
-        return `<tr><td><b>${esc(d.title)}</b><div class="muted small">${esc(d.ref || '')}</div></td><td><span class="status ${d.stage === 'Issued' ? 'Issued' : 'Draft'}">${esc(d.stage)}</span></td><td>${esc(d.version || '—')}</td><td class="small">${d.effectiveDate ? fmtDate(d.effectiveDate) : '—'}</td><td class="small">${exp}</td>
+        const lf = (d.lawFlags || [])[0];
+        return `<tr><td><b>${esc(d.title)}</b><div class="muted small">${esc(d.ref || '')}</div>${lf ? `<div class="small exp-warn" title="${esc(lf.summary)}">⚠ Change in law – SAFE Legal is reviewing this policy: ${esc(lf.title)}</div>` : ''}</td><td><span class="status ${d.stage === 'Issued' ? 'Issued' : 'Draft'}">${esc(d.stage)}</span></td><td>${esc(d.version || '—')}</td><td class="small">${d.effectiveDate ? fmtDate(d.effectiveDate) : '—'}</td><td class="small">${exp}</td>
         <td>${d.canDownload ? `<button class="btn small" data-action="download" data-id="${d.id}">Download</button>` : ''}</td></tr>`;
       }).join('')}</tbody></table></div></div>
       <p class="small muted">Documents in preparation are shared once SAFE Legal has reviewed and issued them.</p>`;
+  }
+
+  function viewAsk() {
+    const a = st.answer;
+    return `<div class="card"><h3>Ask a question about your policies</h3>
+      <p class="small muted">Answers come only from the policies SAFE Legal has issued to you. They are generated by AI, are not legal advice, and may be incomplete; for anything important, send the question to SAFE Legal.</p>
+      <form data-form="ask"><textarea class="input" id="askQ" rows="3" maxlength="1000" placeholder="e.g. How many days of earned leave can be carried forward?">${esc(st.lastQ || '')}</textarea>
+      <div class="row" style="margin-top:8px"><button class="btn primary" type="submit" ${st.asking ? 'disabled' : ''}>${st.asking ? 'Looking through your policies…' : 'Ask'}</button></div></form></div>
+      ${a ? `<div class="card"><div class="ai-answer">${esc(a.text)}</div>
+        ${a.sources && a.sources.length ? `<p class="small muted" style="margin-top:8px">Looked at: ${a.sources.map(esc).join('; ')}</p>` : ''}
+        <div class="row" style="margin-top:10px"><button class="btn small ${a.answered ? '' : 'primary'}" data-action="ask-to-safe">Send this question to SAFE Legal</button></div></div>` : ''}`;
   }
 
   function reviewDialog() {
@@ -247,10 +273,15 @@
     });
     if (k === 'custom') {
       st.custom.push({ title: $('#cTitle').value.trim(), kind: $('#cKind').value, details: $('#cDetails').value.trim() });
-      st.prefill = '';
+      st.prefill = ''; st.draftDetails = ''; st.undoText = null;
       toast('Added – click "Review and submit" at the bottom to send it to SAFE Legal', 'ok'); render();
     }
     if (k === 'submit') run(submitRequest);
+    if (k === 'ask') run(async () => {
+      const q = $('#askQ').value.trim(); if (q.length < 5) throw new Error('Please type your question.');
+      st.lastQ = q; st.asking = true; render();
+      try { const out = await api('portalAsk', { session: st.session, question: q }); st.answer = out.answer; } finally { st.asking = false; render(); }
+    });
     if (k === 'withdraw') run(async () => {
       const out = await api('portalWithdraw', { session: st.session, requestId: f.dataset.id, reason: $('#wReason').value.trim(), withdrawnBy: { name: $('#wName').value.trim(), email: $('#wEmail').value.trim() } });
       st.data = out.data; closeModal(); render();
@@ -267,6 +298,17 @@
     else if (a === 'close-modal') closeModal();
     else if (a === 'review') reviewDialog();
     else if (a === 'withdraw') withdrawDialog(el.dataset.id);
+    else if (a === 'pick-reco') { (st.data.recommendations || []).forEach((x) => { if (!x.off && S.itemById(x.id) && !docForItem(x.id) && !pendingForItem(x.id)) st.selected.add(x.id); }); render(); }
+    else if (a === 'ask-to-safe') {
+      st.custom.push({ title: 'Question: ' + (st.lastQ || '').slice(0, 250), kind: 'question', details: st.lastQ || '' });
+      st.answer = null; toast('Question added – click "Review and submit" to send it to SAFE Legal', 'ok'); render();
+    } else if (a === 'improve-wording') run(async () => {
+      const ta = $('#cDetails'); const text = ta.value.trim(); if (!text) throw new Error('Type what the document should cover first.');
+      st.prefill = $('#cTitle').value; el.textContent = 'Improving…';
+      const out = await api('portalLegalise', { session: st.session, text, title: $('#cTitle').value, kind: $('#cKind').value });
+      st.undoText = text; st.draftDetails = out.text; render(); toast('Wording improved – check it before adding', 'ok');
+    });
+    else if (a === 'undo-wording') { st.prefill = $('#cTitle').value; st.draftDetails = st.undoText; st.undoText = null; render(); }
     else if (a === 'remove-custom') { st.custom.splice(+el.dataset.i, 1); render(); }
     else if (a === 'pick') {
       const ind = S.industryById(st.data.client.industry);

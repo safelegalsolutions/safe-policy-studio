@@ -18,7 +18,7 @@
   const st = {
     store: null, db: null, clientId: null, tab: null, docId: null, work: null,
     lib: { q: '', cat: 'All', tags: { M: true, I: true, R: true }, relevantOnly: true, readyOnly: false, selected: new Set() },
-    docFilter: 'All', docQ: '', lhCache: {}, busy: false, view: null, reqId: null, reqFilter: 'Open',
+    docFilter: 'All', docQ: '', lhCache: {}, busy: false, view: null, reqId: null, reqFilter: 'Open', lawId: null, lawFilter: 'New', undo: null, aiBusy: false,
   };
 
   // ---------------------------------------------------------------- utilities
@@ -59,6 +59,11 @@
     return st.db.docs.filter((d) => d.status !== 'Archived' && d.issued && d.issued.expiryDate && daysUntil(d.issued.expiryDate) <= lim)
       .sort((a, b) => a.issued.expiryDate.localeCompare(b.issued.expiryDate));
   }
+  /** Throws if any address in a comma-separated list is not a valid email. */
+  function checkEmails(str, label) {
+    const bad = String(str || '').split(/[,;\s]+/).map((e) => e.trim()).filter(Boolean).filter((e) => !/^[^@\s<>"']+@[^@\s<>"']+\.[A-Za-z]{2,}$/.test(e));
+    if (bad.length) throw new Error(`${label}: "${bad.join('", "')}" ${bad.length > 1 ? 'are not valid email addresses' : 'is not a valid email address'}. Separate several addresses with commas.`);
+  }
   const nextMinor = (v) => { const [a, b] = String(v || '1.0').split('.').map(Number); return a + '.' + ((b || 0) + 1); };
   const nextMajor = (v) => { const [a] = String(v || '1.0').split('.').map(Number); return (a + 1) + '.0'; };
 
@@ -77,10 +82,20 @@
       st.db = await st.store.load();
     }
     renderAll();
+    syncCatalog();
     const due = dueDocs();
     try {
       if (due.length && !sessionStorage.getItem('sps-due-shown')) { sessionStorage.setItem('sps-due-shown', '1'); showReminders(true); }
     } catch (e) { /* ignore */ }
+  }
+
+  const CATALOG_VERSION = S.ITEMS.length + '-' + Object.keys(S.TEMPLATES).length + '-1';
+  async function syncCatalog() {
+    if (st.store.mode !== 'google' || st.db.catalogVersion === CATALOG_VERSION) return;
+    try {
+      await st.store.ai('syncCatalog', { version: CATALOG_VERSION, items: S.ITEMS.map((i) => ({ id: i.id, title: i.title, tag: i.tag, cat: i.cat, industries: i.industries })) });
+      st.db.catalogVersion = CATALOG_VERSION;
+    } catch (e) { console.warn('Catalog sync failed', e); }
   }
 
   function renderAll() {
@@ -92,6 +107,8 @@
     const dc = $('#dueCount'); dc.textContent = n; dc.hidden = !n;
     const ni = (st.db.requests || []).filter((r) => r.status === 'New').length;
     const ic = $('#inboxCount'); if (ic) { ic.textContent = ni; ic.hidden = !ni; }
+    const nl = (st.db.lawUpdates || []).filter((u) => u.status === 'New').length;
+    const lc = $('#lawCount'); if (lc) { lc.textContent = nl; lc.hidden = !nl; }
     renderSidebar();
     renderMain();
   }
@@ -107,7 +124,8 @@
 
   function renderMain() {
     const m = $('#main');
-    if (st.view === 'inbox') m.innerHTML = st.reqId && reqById(st.reqId) ? viewRequest() : viewInbox();
+    if (st.view === 'law') m.innerHTML = st.lawId && lawById(st.lawId) ? viewLawUpdate() : viewLaw();
+    else if (st.view === 'inbox') m.innerHTML = st.reqId && reqById(st.reqId) ? viewRequest() : viewInbox();
     else if (st.docId && docById(st.docId)) m.innerHTML = viewEditor();
     else if (st.clientId && client()) m.innerHTML = viewClient();
     else m.innerHTML = viewHome();
@@ -178,14 +196,17 @@
       ${body}`;
   }
 
-  function fieldInput(f, value, prefix) {
+  function fieldInput(f, value, prefix, opts) {
+    opts = opts || {};
     const name = (prefix || '') + f.k;
     const v = value === undefined || value === null ? (f.d !== undefined ? f.d : '') : value;
     let input;
     if (f.t === 'textarea') input = `<textarea class="input" data-field="${esc(name)}" rows="3">${esc(v)}</textarea>`;
     else if (f.t === 'select') input = `<select class="input" data-field="${esc(name)}">${f.o.map((o) => `<option ${String(o) === String(v) ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
     else input = `<input class="input" data-field="${esc(name)}" type="${f.t === 'number' ? 'number' : f.t === 'date' ? 'date' : 'text'}" value="${esc(v)}">`;
-    return `<label class="field">${esc(f.l)}${f.req ? ' <span class="req">*</span>' : ''}${input}${f.h ? `<span class="help">${esc(f.h)}</span>` : ''}</label>`;
+    const ai = opts.ai && f.t === 'textarea' && !/Block$/.test(f.k)
+      ? `<span class="ai-row">${st.undo && st.undo.field === name ? `<button type="button" class="link-btn" data-action="ai-undo">↶ Undo AI wording</button>` : ''}<button type="button" class="link-btn ai-btn" data-action="ai-legalise" data-target="${esc(name)}" title="Rewrite this text in proper legal language">✨ Legal wording</button></span>` : '';
+    return `<label class="field">${esc(f.l)}${f.req ? ' <span class="req">*</span>' : ''}${input}${f.h ? `<span class="help">${esc(f.h)}</span>` : ''}${ai}</label>`;
   }
 
   function industrySelect(c) {
@@ -230,6 +251,7 @@
           ${lh ? '<button class="btn danger small" data-action="remove-letterhead">Remove letterhead</button>' : ''}
         </div>
       </div>
+      ${recoCard(c)}
       ${portalCard(c)}
       <div class="row" style="margin-top:16px;justify-content:space-between">
         <button class="btn primary" data-action="save-profile">Save profile</button>
@@ -275,6 +297,8 @@
   async function saveProfile(silent) {
     const c = collectProfile();
     if (!c.name) throw new Error('Enter the legal name of the company.');
+    checkEmails(c.reminderEmails, 'Company email(s) for expiry reminders');
+    checkEmails(c.hrEmail, 'HR email'); checkEmails(c.dpoEmail, 'Data protection contact email'); checkEmails(c.grievanceEmail, 'Grievance Officer email');
     c.short = (c.short || '').toUpperCase().replace(/[^A-Z0-9-]/g, '');
     c.updatedAt = new Date().toISOString();
     await st.store.saveClient(c);
@@ -504,7 +528,7 @@
       const already = it && have.has(it.id) && !i.docId;
       const checked = i.included !== false && !already;
       return `<div class="lib-item"><input type="checkbox" data-reqitem="${idx}" ${checked ? 'checked' : ''} ${done ? 'disabled' : ''}>
-        <span>${i.type === 'custom' ? `<b>New ${esc(i.kind || 'policy')}:</b> ` : ''}${esc(i.title)}${i.details ? `<div class="muted small">${esc(i.details)}</div>` : ''}${already ? '<div class="small exp-warn">Already in this client\'s documents</div>' : ''}${i.type === 'custom' && !done ? `<div class="row small" style="margin-top:4px">Create as <select class="input" style="width:auto;padding:2px 6px" data-reqkind="${idx}"><option value="custom-policy" ${i.kind !== 'agreement' ? 'selected' : ''}>custom policy</option><option value="custom-agreement" ${i.kind === 'agreement' ? 'selected' : ''}>custom agreement</option>${S.ITEMS.filter((x) => x.cat !== 'Custom').map((x) => `<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select></div>` : ''}</span>
+        <span>${i.kind === 'question' ? '<b>Question from client:</b> ' : i.type === 'custom' ? `<b>New ${esc(i.kind || 'policy')}:</b> ` : ''}${esc(i.title)}${i.details ? `<div class="muted small">${esc(i.details)}</div>` : ''}${already ? '<div class="small exp-warn">Already in this client\'s documents</div>' : ''}${i.kind === 'question' ? '<div class="small muted">Answer it in the note to the client, then mark the request completed.</div>' : ''}${i.type === 'custom' && i.kind !== 'question' && !done ? `<div class="row small" style="margin-top:4px">Create as <select class="input" style="width:auto;padding:2px 6px" data-reqkind="${idx}"><option value="custom-policy" ${i.kind !== 'agreement' ? 'selected' : ''}>custom policy</option><option value="custom-agreement" ${i.kind === 'agreement' ? 'selected' : ''}>custom agreement</option>${S.ITEMS.filter((x) => x.cat !== 'Custom').map((x) => `<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select></div>` : ''}</span>
         <span class="meta">${it ? `<span class="tag ${it.tag}">${it.tag}</span>${S.isRelevant(it, ind) ? '' : '<span class="badge skeleton">Not typical for industry</span>'}` : '<span class="badge added">Not in library</span>'}${doc ? `<button class="btn small" data-action="open-doc" data-id="${doc.id}" data-client="${doc.clientId}">${esc(doc.status)}</button>` : ''}</span></div>`;
     }).join('');
     const hist = (r.history || []).slice().reverse().map((h) => `<li>${S.fmtDate(h.at.slice(0, 10))} – ${esc(h.by)}: ${esc(h.action)}</li>`).join('');
@@ -554,6 +578,7 @@
       document.querySelectorAll('[data-reqitem]').forEach((cb) => { r.items[+cb.dataset.reqitem].included = cb.checked; });
       r.items.forEach((i, idx) => {
         if (i.included === false || i.docId) return;
+        if (i.kind === 'question') return;
         if (i.type === 'library') entries.push({ itemId: i.itemId, ref: i, requestId: r.id });
         else {
           const sel = document.querySelector(`[data-reqkind="${idx}"]`);
@@ -561,7 +586,7 @@
           entries.push({ itemId: target, customTitle: /^custom-/.test(target) ? i.title : '', values: /^custom-/.test(target) ? { customPurpose: i.details || '' } : {}, ref: i, requestId: r.id });
         }
       });
-      if (!entries.length) throw new Error('Nothing is ticked to add. Use Decline if you will not take up this request.');
+      if (!entries.length) throw new Error('Nothing is ticked to add as a document. For a question, write your answer in the note and use "Mark completed" or "Send note only".');
       await createDocs(r.clientId, entries);
       entries.forEach((e) => { e.ref.docId = e.docId; });
       r.status = 'Approved';
@@ -588,7 +613,7 @@
         const it = S.itemById(d.itemId) || {};
         const e = expiryInfo(d);
         const ver = d.issued && d.status !== 'Issued' && d.status !== 'Archived' ? `${esc(d.issued.version)} in force<br><span class="muted small">v${esc(d.version)} in draft</span>` : esc(d.version);
-        return `<tr><td class="small">${esc(d.ref)}</td><td><b>${esc(d.title)}</b><div class="muted small">${esc(it.sectionTitle || '')}</div></td><td><span class="tag ${it.tag}">${it.tag}</span></td><td>${ver}</td><td><span class="status ${esc(d.status)}">${esc(d.status)}</span></td><td class="${e.cls} small">${e.text}</td>
+        return `<tr><td class="small">${esc(d.ref)}</td><td><b>${esc(d.title)}</b>${(d.lawFlags || []).some((f) => !f.resolved) ? ' <span class="status Declined" title="A change in law may affect this document">⚠ Law change</span>' : ''}<div class="muted small">${esc(it.sectionTitle || '')}</div></td><td><span class="tag ${it.tag}">${it.tag}</span></td><td>${ver}</td><td><span class="status ${esc(d.status)}">${esc(d.status)}</span></td><td class="${e.cls} small">${e.text}</td>
         <td class="row" style="flex-wrap:nowrap"><button class="btn small" data-action="open-doc" data-id="${d.id}">Open</button><button class="btn small ghost" data-action="download-doc" data-id="${d.id}" title="Download Word">⤓</button><button class="btn small ghost danger" data-action="delete-doc" data-id="${d.id}" title="Delete">🗑</button></td></tr>`;
       }).join('') || '<tr><td colspan="7" class="muted">No documents match.</td></tr>'}
       </tbody></table></div></div>`;
@@ -683,6 +708,7 @@
           ${actions.join('')}
         </div>
       </div>
+      ${(d.lawFlags || []).filter((f) => !f.resolved).map((f) => `<div class="notice bad" style="margin-bottom:10px"><b>⚠ Change in law – review this document:</b> ${esc(f.title)}<br>${esc(f.summary)}${f.action ? `<br><b>What to do:</b> ${esc(f.action)}` : ''}<div style="margin-top:6px"><button class="btn small" data-action="law-resolve" data-update="${esc(f.updateId)}">Mark reviewed – no change needed</button> <span class="small muted">Issuing a new version also clears this.</span></div></div>`).join('')}
       ${locked ? `<div class="notice info" style="margin-bottom:14px">This version is ${d.status === 'Issued' ? 'issued and locked' : 'archived'}. Use <b>Revise</b> to start a new version; the issued version stays in force until the new one is issued.</div>` : ''}
       <div class="editor">
         <div class="card editor-form" id="docForm">
@@ -690,7 +716,8 @@
           <label class="field">Title (change only if the client uses a different name)<input class="input" data-wf="customTitle" value="${esc(w.customTitle)}" placeholder="${esc(it.title)}" ${locked ? 'disabled' : ''}></label>
           ${docFields.map((f) => fieldInput(f, w.meta[f.k], 'meta.')).join('')}
           <div class="group-title">${S.isDrafted(it.id) ? 'Prompts for this document' : 'Content'}</div>
-          ${fields.length ? fields.map((f) => fieldInput(f.dfn ? Object.assign({}, f, { d: f.dfn(c) }) : f, w.values[f.k], 'val.')).join('') : '<p class="muted small">No extra prompts. Company details come from the profile.</p>'}
+          ${!S.isDrafted(it.id) && !locked ? `<div class="ai-card"><b>✨ Draft with AI</b><div class="small">Writes the purpose and operative provisions for ${esc(c.name)} (${esc((industryOf(c) || {}).name || 'its industry')}), using any notes you type in the boxes below. The result lands here as a draft for advocate review.</div><button class="btn small primary" data-action="ai-draft" ${st.aiBusy ? 'disabled' : ''}>${st.aiBusy ? 'Drafting… (up to a minute)' : 'Draft with AI'}</button></div>` : ''}
+          ${fields.length ? fields.map((f) => fieldInput(f.dfn ? Object.assign({}, f, { d: f.dfn(c) }) : f, w.values[f.k], 'val.', { ai: !locked })).join('') : '<p class="muted small">No extra prompts. Company details come from the profile.</p>'}
           <p class="small muted">Company details (name, address, offices, signatory, data protection contacts) come from the <button class="link-btn" data-action="edit-profile">company profile</button>.</p>
         </div>
         <div>
@@ -896,8 +923,14 @@
     if (st.store.mode === 'google') {
       const saved = await st.store.putFile({ clientId: c.id, name, mime: blob.type, data: await blob.arrayBuffer(), folder: 'Issued' });
       entry.fileId = saved.fileId; entry.fileUrl = saved.url;
+      try {
+        const txt = blocksToText(comp.blocks);
+        const tf = await st.store.putFile({ clientId: c.id, name: name.replace(/\.docx$/, '.txt'), mime: 'text/plain', data: new TextEncoder().encode(txt).buffer, folder: 'Issued' });
+        entry.textFileId = tf.fileId;
+      } catch (e) { console.warn('Text copy not saved', e); }
     }
-    d.issued = { version: ver, effectiveDate: d.meta.effectiveDate, expiryDate: d.meta.expiryDate, fileId: entry.fileId || null, snapshot: { values: entry.values, meta: entry.meta, customTitle: entry.customTitle } };
+    d.lawFlags = (d.lawFlags || []).map((f) => (f.resolved ? f : Object.assign({}, f, { resolved: true, resolvedAt: new Date().toISOString(), resolvedBy: 'New version ' + ver })));
+    d.issued = { version: ver, effectiveDate: d.meta.effectiveDate, expiryDate: d.meta.expiryDate, fileId: entry.fileId || null, textFileId: entry.textFileId || null, snapshot: { values: entry.values, meta: entry.meta, customTitle: entry.customTitle } };
     d.lastReminderAt = null; d.revisionNote = '';
     d.updatedAt = new Date().toISOString();
     await st.store.saveDoc(d);
@@ -946,6 +979,240 @@
     if (!dry) { st.db = await st.store.load(); renderAll(); }
   }
 
+  // ---------------------------------------------------------------- AI helpers
+  function blocksToText(blocks) {
+    const t = (runs) => (runs || []).map((r) => (r.br ? '\n' : r.text || '')).join('');
+    return blocks.map((b) => {
+      if (b.t === 'table') return b.rows.map((row) => row.map(t).join(' | ')).join('\n');
+      if (b.t === 'clause') return b.num + ' ' + t(b.runs);
+      if (b.t === 'bullet') return (b.level ? '    - ' : '  - ') + t(b.runs);
+      if (b.t === 'h1' || b.t === 'title') return '\n' + t(b.runs).toUpperCase();
+      if (b.t === 'pagebreak' || b.t === 'spacer') return '';
+      return t(b.runs);
+    }).join('\n');
+  }
+
+  function needGoogle() { if (st.store.mode !== 'google') throw new Error('AI features need the Google backend. Connect it in Settings first.'); }
+
+  async function aiDraftDoc() {
+    needGoogle();
+    const d = docById(st.docId); const c = st.db.clients.find((x) => x.id === d.clientId); const it = S.itemById(d.itemId);
+    const ind = industryOf(c);
+    st.aiBusy = true; renderMain();
+    try {
+      const r = await st.store.ai('aiDraft', {
+        title: st.work.customTitle || it.title, kind: it.kind, section: it.sectionTitle,
+        industry: ind ? ind.name : (c.industryOther || ''), legalForm: c.legalForm || '', states: c.states || '', headcount: c.headcount || '', regulators: c.regulators || '',
+        purpose: st.work.values.customPurpose || '', notes: st.work.values.customBody || '',
+      });
+      st.undo = { field: 'val.customBody', text: st.work.values.customBody || '', field2: 'val.customPurpose', text2: st.work.values.customPurpose || '' };
+      st.work.values.customBody = r.draft.body;
+      if (r.draft.purpose) st.work.values.customPurpose = r.draft.purpose;
+      toast('AI draft added – review every clause before issue, then Save', 'ok');
+    } finally { st.aiBusy = false; renderMain(); }
+  }
+
+  async function aiLegaliseField(name) {
+    needGoogle();
+    const el = document.querySelector(`[data-field="${name}"]`);
+    const text = el ? el.value.trim() : '';
+    if (!text) throw new Error('Type your points in the box first, then click Legal wording.');
+    const d = docById(st.docId); const c = st.db.clients.find((x) => x.id === d.clientId); const it = S.itemById(d.itemId);
+    toast('Rewriting in legal language…');
+    const r = await st.store.ai('aiLegalise', { text, context: { title: st.work.customTitle || it.title, kind: it.kind, industry: (industryOf(c) || {}).name || '' } });
+    st.undo = { field: name, text };
+    if (name.startsWith('val.')) st.work.values[name.slice(4)] = r.text; else if (name.startsWith('meta.')) st.work.meta[name.slice(5)] = r.text;
+    renderMain();
+    toast('Rewritten – check it, then Save. Use Undo to restore your text.', 'ok');
+  }
+
+  function aiUndo() {
+    const u = st.undo; if (!u) return;
+    const setv = (f, v) => { if (f.startsWith('val.')) st.work.values[f.slice(4)] = v; else if (f.startsWith('meta.')) st.work.meta[f.slice(5)] = v; };
+    setv(u.field, u.text); if (u.field2) setv(u.field2, u.text2);
+    st.undo = null; renderMain(); toast('Restored your text');
+  }
+
+  // ---------------------------------------------------------------- AI recommendations
+  function recoCard(c) {
+    if (st.store.mode !== 'google') return '';
+    const r = c.recommendations;
+    const items = (r && r.items) || [];
+    const have = new Set(clientDocs(c.id).map((d) => d.itemId));
+    return `<div class="card"><div class="spread"><h3>AI recommendations ${r && r.published ? '<span class="status Issued">Shown in client portal</span>' : ''}</h3>
+      <button class="btn small" data-action="ai-recommend" ${st.aiBusy ? 'disabled' : ''}>${st.aiBusy ? 'Thinking…' : items.length ? '✨ Refresh suggestions' : '✨ Suggest with AI'}</button></div>
+      <p class="small muted">Claude reviews ${esc(c.name)}'s industry, states, headcount and regulators and suggests the policies it should have, with the legal reason for each. Check them, then publish them to the client portal as "Recommended for you".</p>
+      ${items.length ? `<div style="border:1px solid var(--line);border-radius:8px;max-height:380px;overflow:auto">${items.map((x, i) => {
+        const it = S.itemById(x.id) || { title: x.id, tag: 'R' };
+        return `<label class="lib-item"><input type="checkbox" data-reco="${i}" ${x.off ? '' : 'checked'}><span><b>${esc(it.title)}</b> <span class="tag ${it.tag}">${it.tag}</span> <span class="badge ${x.priority === 'high' ? 'added' : 'skeleton'}">${esc(x.priority)}</span>${have.has(x.id) ? ' <span class="badge ready">Already added</span>' : ''}<div class="small muted">${esc(x.reason)}</div></span><span></span></label>`;
+      }).join('')}</div>
+      <div class="row" style="margin-top:10px"><button class="btn small primary" data-action="reco-publish">${r.published ? 'Update client portal' : 'Publish to client portal'}</button>${r.published ? '<button class="btn small" data-action="reco-unpublish">Hide from portal</button>' : ''}<button class="btn small" data-action="reco-add">Add ticked to documents</button>${r.at ? `<span class="small muted">Suggested ${S.fmtDate(r.at.slice(0, 10))}</span>` : ''}</div>` : ''}
+    </div>`;
+  }
+
+  async function aiRecommend() {
+    needGoogle();
+    const c = collectProfile();
+    const ind = industryOf(c);
+    st.aiBusy = true; renderMain();
+    try {
+      const catalog = S.ITEMS.filter((i) => i.cat !== 'Custom' && S.isRelevant(i, ind)).map((i) => ({ id: i.id, title: i.title, tag: i.tag }));
+      const profile = { industry: ind ? ind.name : (c.industryOther || ''), industryGroup: ind ? ind.group : '', legalForm: c.legalForm, states: c.states, offices: String(c.offices || '').split('\n').filter(Boolean).length, headcount: c.headcount, womenEmployees: c.headcountWomen, regulators: c.regulators, regulatoryLicence: c.regNo ? 'yes' : 'no' };
+      const r = await st.store.ai('aiRecommend', { profile, catalog });
+      c.recommendations = { items: r.items, at: new Date().toISOString(), published: false };
+      await st.store.saveClient(c);
+      toast(r.items.length + ' suggestions – check them before publishing', 'ok');
+    } finally { st.aiBusy = false; renderAll(); }
+  }
+
+  async function recoSave(publish) {
+    const c = collectProfile();
+    const items = (c.recommendations && c.recommendations.items) || [];
+    document.querySelectorAll('[data-reco]').forEach((cb) => { items[+cb.dataset.reco].off = !cb.checked; });
+    c.recommendations = Object.assign({}, c.recommendations, { items, published: publish });
+    await st.store.saveClient(c);
+    toast(publish ? 'Recommendations shown in the client portal' : 'Recommendations hidden from the portal', 'ok');
+    renderAll();
+  }
+
+  // ---------------------------------------------------------------- Law updates
+  const lawById = (id) => (st.db.lawUpdates || []).find((u) => u.id === id) || null;
+  function affectedDocs(u) {
+    const ids = new Set(u.affectedItemIds || []);
+    return st.db.docs.filter((d) => ids.has(d.itemId) && d.status !== 'Archived');
+  }
+
+  function viewLaw() {
+    const all = (st.db.lawUpdates || []).slice().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const filters = ['New', 'Approved', 'Dismissed', 'All'];
+    const list = all.filter((u) => st.lawFilter === 'All' || u.status === st.lawFilter);
+    const flagged = st.db.docs.filter((d) => (d.lawFlags || []).some((f) => !f.resolved));
+    return `<div class="page-head"><div><div class="eyebrow">AI law watch</div><h1>Law updates</h1>
+      <div class="muted small">Changes in Indian law found by the daily law watch or added by SAFE. AI summarises each one and suggests the policies it affects. Nothing reaches clients until you approve it.</div></div>
+      <div class="row"><button class="btn" data-action="law-add">+ Add a law change</button><button class="btn" data-action="law-run" ${st.aiBusy ? 'disabled' : ''}>${st.aiBusy ? 'Checking sources…' : 'Check sources now'}</button></div></div>
+      ${flagged.length ? `<div class="notice warn" style="margin-bottom:12px">${flagged.length} client document${flagged.length > 1 ? 's are' : ' is'} flagged for review after a change in law. Open the client to see them (marked ⚠ Law change).</div>` : ''}
+      <div class="chips" style="margin-bottom:12px">${filters.map((f) => `<button class="chip ${st.lawFilter === f ? 'on' : ''}" data-action="law-filter" data-f="${f}">${f} (${all.filter((u) => f === 'All' || u.status === f).length})</button>`).join('')}</div>
+      <div class="card" style="padding:0"><div class="table-wrap"><table class="table"><thead><tr><th>Found</th><th>Change</th><th>Urgency</th><th>Affects</th><th>Status</th><th></th></tr></thead><tbody>
+      ${list.map((u) => `<tr><td class="small">${S.fmtDate(u.createdAt.slice(0, 10))}<div class="muted">${esc(u.source)}</div></td><td><b>${esc(u.title)}</b><div class="small muted">${esc(u.summary.slice(0, 180))}${u.summary.length > 180 ? '…' : ''}</div></td>
+        <td><span class="status ${u.urgency === 'high' ? 'Declined' : u.urgency === 'medium' ? 'Under review' : 'Draft'}">${esc(u.urgency)}</span></td><td class="small">${(u.affectedItemIds || []).length} policies · ${affectedDocs(u).length} client docs</td>
+        <td><span class="status ${u.status === 'Approved' ? 'Issued' : u.status === 'New' ? 'req-New' : 'Archived'}">${esc(u.status)}</span></td><td><button class="btn small" data-action="open-law" data-id="${u.id}">Open</button></td></tr>`).join('') || `<tr><td colspan="6" class="muted">${st.store.mode === 'google' ? 'No law updates here.' : 'The law watch needs the Google backend.'}</td></tr>`}
+      </tbody></table></div></div>`;
+  }
+
+  function viewLawUpdate() {
+    const u = lawById(st.lawId);
+    const docs = affectedDocs(u);
+    const byClient = {};
+    docs.forEach((d) => { (byClient[d.clientId] = byClient[d.clientId] || []).push(d); });
+    const sel = new Set(u.affectedItemIds || []);
+    const done = u.status !== 'New';
+    return `<div class="page-head"><div><button class="link-btn" data-action="law-back">← Law updates</button>
+      <div class="eyebrow">${esc(u.source)}${u.publishedAt ? ' · ' + esc(u.publishedAt) : ''}</div><h1>${esc(u.title)}</h1>
+      <div class="muted small">Urgency: ${esc(u.urgency)}${u.effectiveDate ? ' · effective ' + S.fmtDate(u.effectiveDate) : ''} · <span class="status ${u.status === 'Approved' ? 'Issued' : 'req-New'}">${esc(u.status)}</span>${u.link ? ` · <a href="${esc(u.link)}" target="_blank" rel="noopener">Open the source</a>` : ''}</div></div></div>
+      <div class="editor" style="grid-template-columns:1fr minmax(280px,380px)">
+        <div>
+          <div class="card"><h3>AI summary <span class="small muted">(edit before approving if needed)</span></h3>
+            <label class="field">Summary (shown to clients if you notify them)<textarea class="input" id="lawSummary" rows="4" ${done ? 'disabled' : ''}>${esc(u.summary)}</textarea></label>
+            <label class="field">What companies must do<textarea class="input" id="lawAction" rows="3" ${done ? 'disabled' : ''}>${esc(u.action || '')}</textarea></label>
+            <p class="small muted">AI can misread a circular. Check the source before approving.</p></div>
+          <div class="card"><h3>Policies affected</h3><p class="small muted">Tick the library documents whose text may need to change. Every client document of these types will be flagged for review.</p>
+            <input class="input" type="search" placeholder="Search to add more policies" data-lawq style="margin-bottom:8px" ${done ? 'disabled' : ''}>
+            <div style="max-height:360px;overflow:auto;border:1px solid var(--line);border-radius:8px" id="lawItems">${lawItemsHtml(sel, '', done)}</div></div>
+        </div>
+        <div>
+          <div class="card"><h3>Clients affected now</h3>${Object.keys(byClient).length ? `<ul class="small">${Object.keys(byClient).map((cid) => `<li><b>${esc(clientName(cid))}</b>: ${byClient[cid].map((d) => esc(d.title)).join('; ')}</li>`).join('')}</ul>` : '<p class="small muted">No client has these documents yet.</p>'}</div>
+          <div class="card"><h3>Decision</h3>
+            ${done ? `<p class="small">${u.status === 'Approved' ? `Approved ${u.approvedAt ? S.fmtDate(u.approvedAt.slice(0, 10)) : ''}: ${u.flaggedDocs || 0} documents of ${u.flaggedClients || 0} clients flagged.` : 'Dismissed.'}</p>` : `
+            <label class="small"><input type="checkbox" id="lawNotify"> Email affected clients now</label>
+            <div class="row" style="margin-top:10px"><button class="btn gold" data-action="law-approve">Approve and flag documents</button><button class="btn" data-action="law-dismiss">Dismiss</button></div>`}
+            <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px"><button class="btn small danger" data-action="law-delete">Delete</button></div></div>
+        </div></div>`;
+  }
+
+  function lawItemsHtml(sel, q, done) {
+    q = (q || '').toLowerCase();
+    const items = S.ITEMS.filter((i) => i.cat !== 'Custom' && (sel.has(i.id) || (q && (i.title + ' ' + (i.keywords || '')).toLowerCase().includes(q))));
+    return items.map((i) => `<label class="lib-item"><input type="checkbox" data-lawitem="${i.id}" ${sel.has(i.id) ? 'checked' : ''} ${done ? 'disabled' : ''}><span>${esc(i.title)} <span class="muted small">${esc(i.sectionTitle)}</span></span><span class="tag ${i.tag}">${i.tag}</span></label>`).join('') || '<p class="small muted" style="padding:8px">No policies selected. Search above to add.</p>';
+  }
+
+  function lawFormState() {
+    const u = JSON.parse(JSON.stringify(lawById(st.lawId)));
+    if ($('#lawSummary')) u.summary = $('#lawSummary').value.trim();
+    if ($('#lawAction')) u.action = $('#lawAction').value.trim();
+    const sel = new Set(u.affectedItemIds || []);
+    document.querySelectorAll('[data-lawitem]').forEach((cb) => { if (cb.checked) sel.add(cb.dataset.lawitem); else sel.delete(cb.dataset.lawitem); });
+    u.affectedItemIds = [...sel];
+    return u;
+  }
+
+  async function lawDecide(status) {
+    const u = lawFormState();
+    u.status = status;
+    const notify = status === 'Approved' && $('#lawNotify') && $('#lawNotify').checked;
+    const r = await st.store.saveLawUpdate(u, notify);
+    st.db = await st.store.load();
+    toast(status === 'Approved' ? `Approved – ${r.flagged} documents of ${r.clients} clients flagged${notify ? ', clients emailed' : ''}` : 'Dismissed', 'ok');
+    renderAll();
+  }
+
+  function lawAddDialog() {
+    openModal('Add a law change', `<p class="small muted">Paste the text of a circular, notification, amendment or judgment (for example from IRDAI, the Labour Ministry, MeitY or CERT-In, which have no feeds). Claude will summarise it and suggest the policies it affects.</p>
+      <div class="grid2"><label class="field">Source<input class="input" id="laSource" placeholder="e.g. IRDAI circular"></label><label class="field">Date<input class="input" id="laDate" type="date"></label>
+      <label class="field span2">Link (optional)<input class="input" id="laLink" placeholder="https://"></label>
+      <label class="field span2">Text <span class="req">*</span><textarea class="input" id="laText" rows="10"></textarea></label></div>
+      <div class="modal-actions"><button class="btn" data-action="close-modal">Cancel</button><button class="btn primary" data-action="law-analyse">Analyse with AI</button></div>`);
+  }
+
+  // ---------------------------------------------------------------- AI settings
+  async function showAiSettings() {
+    needGoogle();
+    const s = settings();
+    openModal('AI and law watch', '<p class="muted">Loading…</p>');
+    const a = (await st.store.ai('aiStatus')).ai;
+    $('#modalBody').innerHTML = `
+      <div class="notice ${a.configured ? 'info' : 'warn'}">${a.configured ? `Claude AI is connected (key ${esc(a.keyHint)}).` : 'Claude AI is not connected yet. Paste a Claude API key from console.anthropic.com.'}</div>
+      <div class="grid2" style="margin-top:10px">
+        <label class="field span2">${a.configured ? 'Replace the' : 'Claude'} API key<input class="input" id="aiKey" type="password" placeholder="sk-ant-…" autocomplete="off"><span class="help">Stored only in your Google backend; it is never shown again or sent to any browser.</span></label>
+      </div>
+      <div class="row" style="margin-top:6px"><button class="btn small primary" data-action="ai-save-key">Save and test key</button>${a.configured ? '<button class="btn small danger" data-action="ai-remove-key">Remove key</button>' : ''}</div>
+      <h3 style="margin-top:16px">Models</h3>
+      <div class="grid2"><label class="field">Drafting and answers<input class="input" id="aiModelMain" value="${esc(s.modelMain || a.modelMain || 'claude-sonnet-5-5')}"></label>
+      <label class="field">Law-watch screening (faster, cheaper)<input class="input" id="aiModelFast" value="${esc(s.modelFast || a.modelFast || 'claude-haiku-5-5')}"></label></div>
+      <h3 style="margin-top:16px">Client portal</h3>
+      <label class="small"><input type="checkbox" id="aiAsk" ${s.portalAsk !== false ? 'checked' : ''}> Clients can ask questions about their issued policies</label><br>
+      <label class="small"><input type="checkbox" id="aiWording" ${s.portalWording !== false ? 'checked' : ''}> Clients can use "Improve wording" when describing a request</label>
+      <h3 style="margin-top:16px">Daily law watch (about 7 a.m.)</h3>
+      <label class="small"><input type="checkbox" id="aiLaw" ${s.lawWatch !== false ? 'checked' : ''}> Check the sources below every day and queue relevant changes under Law updates</label>
+      <label class="field" style="margin-top:6px">Sources (one per line: Name | RSS feed URL)<textarea class="input" id="aiSources" rows="5">${esc(s.lawSources || '')}</textarea><span class="help">Leave blank to use the defaults (SEBI, PIB, RBI). IRDAI, the Labour Ministry, MeitY and CERT-In have no feeds; add their circulars with "+ Add a law change".</span></label>
+      ${a.lastLawWatch ? `<p class="small muted">Last run: ${esc(a.lastLawWatch.replace('T', ' ').slice(0, 16))} UTC</p>` : ''}
+      <div id="aiResult" class="small" style="margin-top:8px"></div>
+      <div class="modal-actions"><button class="btn small" data-action="ai-prepare-qa">Prepare issued documents for client questions</button><button class="btn" data-action="close-modal">Close</button><button class="btn primary" data-action="ai-save-settings">Save AI settings</button></div>`;
+  }
+
+  async function saveAiSettings() {
+    const s = Object.assign({}, st.db.settings || {}, {
+      modelMain: $('#aiModelMain').value.trim() || 'claude-sonnet-5-5', modelFast: $('#aiModelFast').value.trim() || 'claude-haiku-5-5',
+      portalAsk: $('#aiAsk').checked, portalWording: $('#aiWording').checked, lawWatch: $('#aiLaw').checked, lawSources: $('#aiSources').value.trim(),
+    });
+    await st.store.saveSettings(s);
+    closeModal(); toast('AI settings saved', 'ok');
+  }
+
+  async function prepareQa() {
+    needGoogle();
+    const todo = st.db.docs.filter((d) => d.status === 'Issued' && d.issued && !d.issued.textFileId);
+    let n = 0;
+    for (const d0 of todo) {
+      const d = Object.assign({}, d0);
+      const c = st.db.clients.find((x) => x.id === d.clientId); if (!c) continue;
+      const comp = S.composeDocument(c, asIssuedView(d));
+      const tf = await st.store.putFile({ clientId: c.id, name: `${d.ref} ${d.title} v${d.issued.version}.txt`.replace(/[\\/:*?"<>|]+/g, '-'), mime: 'text/plain', data: new TextEncoder().encode(blocksToText(comp.blocks)).buffer, folder: 'Issued' });
+      d.issued = Object.assign({}, d.issued, { textFileId: tf.fileId });
+      await st.store.saveDoc(d); n++;
+    }
+    $('#aiResult').innerHTML = `<div class="notice info">${n} issued document${n === 1 ? '' : 's'} prepared. ${todo.length ? '' : 'All issued documents were already ready.'} New issues are prepared automatically.</div>`;
+  }
+
   // ---------------------------------------------------------------- settings
   function showSettings() {
     const con = S.getConnection();
@@ -971,6 +1238,9 @@
         <label class="field">Address of this app (for links in emails)<input class="input" id="setApp" value="${esc(s.appUrl || location.href.split('#')[0])}"></label>
       </div>
       <p class="small muted">The client's own email is taken from each company profile.</p>
+      <h3 style="margin-top:18px">AI and law watch</h3>
+      <p class="small muted">Claude AI drafting, legal wording, recommendations, client questions and the daily law watch.</p>
+      <button class="btn small" data-action="open-ai-settings">Open AI and law watch settings</button>
       <h3 style="margin-top:18px">Data</h3>
       <div class="row"><button class="btn small" data-action="export-data">Export backup (.json)</button>
       ${st.store.mode === 'local' ? '<label class="btn small">Import backup<input type="file" accept=".json" data-import hidden></label>' : '<button class="btn small" data-action="migrate">Copy data from this browser to Google Drive</button>'}</div>
@@ -981,6 +1251,7 @@
     const mode = (document.querySelector('input[name="mode"]:checked') || {}).value || 'local';
     const con = { mode, url: $('#setUrl').value.trim(), key: $('#setKey').value.trim() };
     if (mode === 'google' && (!con.url || !con.key)) throw new Error('Enter the web app URL and API key.');
+    checkEmails($('#setTo').value, 'Reminder email (to)'); checkEmails($('#setCc').value, 'Copy (cc)');
     const s = { safeTo: $('#setTo').value.trim(), safeCc: $('#setCc').value.trim(), reminderDaysBefore: Number($('#setDays').value || 60), reminderIntervalDays: Number($('#setInt').value || 7), reviewerName: $('#setRev').value.trim(), appUrl: $('#setApp').value.trim(), senderName: 'SAFE Legal Solutions – Policy Studio' };
     const prev = S.getConnection();
     S.setConnection(con);
@@ -1037,6 +1308,7 @@
     const name = $('#ncName').value.trim();
     const short = $('#ncShort').value.trim().toUpperCase().replace(/[^A-Z0-9-]/g, '');
     if (!name || !short) throw new Error('Enter the company name and short code.');
+    checkEmails($('#ncEmail').value, 'Company email(s) for reminders');
     const ind = S.industryById($('#ncInd').value);
     const c = { id: S.uid('client'), name, short, industry: $('#ncInd').value, reminderEmails: $('#ncEmail').value.trim(), regulators: ind ? ind.reg.join(', ') : '', jurisdiction: 'Bengaluru', states: 'Karnataka', legalForm: 'Private Limited Company', font: 'Calibri', accent: '1F3864', createdAt: new Date().toISOString() };
     await st.store.saveClient(c);
@@ -1050,7 +1322,7 @@
     if (!el) { if (e.target.id === 'modal') closeModal(); return; }
     const a = el.dataset.action;
     const H = {
-      'go-home': () => { st.view = null; st.clientId = null; st.docId = null; st.work = null; renderAll(); },
+      'go-home': () => { st.lawId = null; st.view = null; st.clientId = null; st.docId = null; st.work = null; renderAll(); },
       'open-inbox': () => { st.view = 'inbox'; st.reqId = null; st.docId = null; st.work = null; renderAll(); },
       'inbox-back': () => { st.reqId = null; renderAll(); },
       'inbox-refresh': () => run(async () => { st.db = await st.store.load(); renderAll(); toast('Inbox refreshed', 'ok'); }),
@@ -1059,6 +1331,52 @@
       'req-status': () => run(() => updateRequest(async (r) => { r.status = el.dataset.to; }, el.dataset.to === 'In review' ? 'Marked in review' : el.dataset.to)),
       'req-note': () => run(() => updateRequest(async () => {}, 'Note sent')),
       'req-approve': () => run(approveRequest),
+      'ai-draft': () => run(aiDraftDoc),
+      'ai-legalise': () => run(() => aiLegaliseField(el.dataset.target)),
+      'ai-undo': aiUndo,
+      'ai-recommend': () => run(aiRecommend),
+      'reco-publish': () => run(() => recoSave(true)),
+      'reco-unpublish': () => run(() => recoSave(false)),
+      'reco-add': () => run(async () => {
+        const c = client(); const have = new Set(clientDocs().map((d) => d.itemId));
+        const ids = []; document.querySelectorAll('[data-reco]').forEach((cb) => { const x = c.recommendations.items[+cb.dataset.reco]; if (cb.checked && !have.has(x.id)) ids.push(x.id); });
+        if (!ids.length) throw new Error('Nothing new is ticked.');
+        const docs = await createDocs(c.id, ids.map((id) => ({ itemId: id }))); toast(docs.length + ' documents added', 'ok'); renderAll();
+      }),
+      'open-law': () => { st.view = 'law'; st.lawId = el.dataset.id; renderAll(); window.scrollTo(0, 0); },
+      'open-laws': () => { st.view = 'law'; st.lawId = null; st.docId = null; st.work = null; renderAll(); },
+      'law-back': () => { st.lawId = null; renderAll(); },
+      'law-filter': () => { st.lawFilter = el.dataset.f; renderMain(); },
+      'law-add': lawAddDialog,
+      'law-analyse': () => run(async () => {
+        needGoogle();
+        const text = $('#laText').value.trim(); if (text.length < 40) throw new Error('Paste the text of the change (at least a few lines).');
+        $('#modalBody').querySelector('[data-action="law-analyse"]').textContent = 'Analysing…';
+        const r = await st.store.ai('lawAnalyse', { text, source: $('#laSource').value.trim(), date: $('#laDate').value, link: $('#laLink').value.trim() });
+        st.db = await st.store.load(); closeModal(); st.view = 'law'; st.lawId = r.result.id; renderAll(); toast('Analysed – check the summary and affected policies', 'ok');
+      }),
+      'law-run': () => run(async () => {
+        needGoogle(); st.aiBusy = true; renderMain();
+        try {
+          const r = (await st.store.ai('lawWatchRun', {})).result;
+          st.db = await st.store.load();
+          const bad = r.sources.filter((x) => !x.ok);
+          toast(`Checked ${r.checked} new item${r.checked === 1 ? '' : 's'}; ${r.relevant} relevant.${bad.length ? ' Could not read: ' + bad.map((x) => x.source).join(', ') : ''}`, bad.length ? '' : 'ok');
+        } finally { st.aiBusy = false; renderAll(); }
+      }),
+      'law-approve': () => run(() => lawDecide('Approved')),
+      'law-dismiss': () => run(() => lawDecide('Dismissed')),
+      'law-delete': () => run(async () => { if (!confirm('Delete this law update? Flags already placed on documents stay until reviewed.')) return; await st.store.ai('deleteLawUpdate', { id: st.lawId }); st.db = await st.store.load(); st.lawId = null; renderAll(); }),
+      'law-resolve': () => run(async () => {
+        const d = Object.assign({}, docById(st.docId));
+        d.lawFlags = (d.lawFlags || []).map((f) => (f.updateId === el.dataset.update ? Object.assign({}, f, { resolved: true, resolvedAt: new Date().toISOString(), resolvedBy: 'Reviewed – no change' }) : f));
+        await st.store.saveDoc(d); toast('Marked as reviewed', 'ok'); renderAll();
+      }),
+      'open-ai-settings': () => run(showAiSettings),
+      'ai-save-key': () => run(async () => { const k = $('#aiKey').value.trim(); if (!k) throw new Error('Paste the API key first.'); $('#aiResult').textContent = 'Testing the key…'; await st.store.ai('setAiKey', { apiKey: k }); toast('Claude API key saved and tested', 'ok'); await showAiSettings(); }),
+      'ai-remove-key': () => run(async () => { if (!confirm('Remove the Claude API key? AI features stop until a key is added again.')) return; await st.store.ai('setAiKey', { remove: true }); await showAiSettings(); }),
+      'ai-save-settings': () => run(saveAiSettings),
+      'ai-prepare-qa': () => run(prepareQa),
       'req-delete': () => run(async () => {
         if (!confirm('Delete this request? It will disappear from the SAFE Inbox and from the client portal. Documents already created from it are kept.')) return;
         await st.store.deleteRequest(st.reqId); st.reqId = null; toast('Request deleted', 'ok'); renderAll();
@@ -1119,7 +1437,8 @@
       'test-conn': () => run(async () => {
         const g = new S.GoogleStore($('#setUrl').value.trim(), $('#setKey').value.trim());
         const r = await g.ping();
-        $('#connResult').innerHTML = `<span class="exp-ok">Connected. Email quota left today: ${r.quota}</span>`;
+        const errs = (r.mailErrors || []).slice(-5).reverse();
+        $('#connResult').innerHTML = `<span class="exp-ok">Connected. Email quota left today: ${r.quota}</span>` + (errs.length ? `<div class="notice warn small" style="margin-top:6px"><b>Recent emails that could not be sent:</b><ul>${errs.map((x) => `<li>${esc(x.at.slice(0, 10))} – ${esc(x.to)} – ${esc(x.subject)}: ${esc(x.error)}</li>`).join('')}</ul></div>` : '');
       }),
       'export-data': () => run(async () => { saveBlob(new Blob([await st.store.exportAll()], { type: 'application/json' }), `safe-policy-studio-backup-${todayIso()}.json`); }),
       'migrate': () => run(migrateToGoogle),
@@ -1132,6 +1451,11 @@
     const t = e.target;
     if (t.id === 'clientSearch') { renderSidebar(); return; }
     if (t.dataset.lib === 'q') { st.lib.q = t.value; const pos = t.selectionStart; renderMain(); const n = document.querySelector('[data-lib="q"]'); n.focus(); n.setSelectionRange(pos, pos); return; }
+    if (t.hasAttribute('data-lawq')) {
+      const u = lawFormState(); const box = $('#lawItems');
+      if (box) box.innerHTML = lawItemsHtml(new Set(u.affectedItemIds), t.value, false);
+      return;
+    }
     if (t.hasAttribute('data-docq')) { st.docQ = t.value; const pos = t.selectionStart; renderMain(); const n = document.querySelector('[data-docq]'); n.focus(); n.setSelectionRange(pos, pos); return; }
     if (st.docId && st.work) {
       const f = t.dataset.field;
