@@ -528,7 +528,8 @@
               ${!done ? '<button class="btn gold" data-action="req-approve">Approve and add as drafts</button><button class="btn danger" data-action="req-status" data-to="Declined">Decline</button>' : ''}
               ${r.status === 'Approved' ? '<button class="btn" data-action="req-status" data-to="Completed">Mark completed</button>' : ''}
               ${done ? '<button class="btn ghost small" data-action="req-note">Send note only</button>' : ''}
-            </div></div>
+            </div>
+            <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px"><button class="btn small danger" data-action="req-delete">Delete request</button> <span class="muted small">Removes it from the Inbox and the client portal (no email is sent). Documents already created stay.</span></div></div>
           <div class="card"><h3>History</h3><ul class="small">${hist}</ul></div>
         </div></div>`;
   }
@@ -587,7 +588,7 @@
         const e = expiryInfo(d);
         const ver = d.issued && d.status !== 'Issued' && d.status !== 'Archived' ? `${esc(d.issued.version)} in force<br><span class="muted small">v${esc(d.version)} in draft</span>` : esc(d.version);
         return `<tr><td class="small">${esc(d.ref)}</td><td><b>${esc(d.title)}</b><div class="muted small">${esc(it.sectionTitle || '')}</div></td><td><span class="tag ${it.tag}">${it.tag}</span></td><td>${ver}</td><td><span class="status ${esc(d.status)}">${esc(d.status)}</span></td><td class="${e.cls} small">${e.text}</td>
-        <td class="row" style="flex-wrap:nowrap"><button class="btn small" data-action="open-doc" data-id="${d.id}">Open</button><button class="btn small ghost" data-action="download-doc" data-id="${d.id}" title="Download Word">⤓</button></td></tr>`;
+        <td class="row" style="flex-wrap:nowrap"><button class="btn small" data-action="open-doc" data-id="${d.id}">Open</button><button class="btn small ghost" data-action="download-doc" data-id="${d.id}" title="Download Word">⤓</button><button class="btn small ghost danger" data-action="delete-doc" data-id="${d.id}" title="Delete">🗑</button></td></tr>`;
       }).join('') || '<tr><td colspan="7" class="muted">No documents match.</td></tr>'}
       </tbody></table></div></div>`;
   }
@@ -677,6 +678,7 @@
         <div class="workflow">
           ${locked ? '' : '<button class="btn primary" data-action="save-doc">Save</button>'}
           <button class="btn" data-action="download-doc" data-id="${d.id}">Download Word</button>
+          <button class="btn danger" data-action="delete-doc" data-id="${d.id}">Delete</button>
           ${actions.join('')}
         </div>
       </div>
@@ -798,6 +800,27 @@
       const dv = f.dfn ? f.dfn(c) : f.d;
       if (dv !== undefined && dv !== '') st.work.values[f.k] = dv;
     });
+  }
+
+  function deleteDocDialog(id) {
+    const d = docById(id); if (!d) return;
+    const c = st.db.clients.find((x) => x.id === d.clientId) || {};
+    const portal = c.portal && c.portal.enabled;
+    openModal('Delete this document?', `
+      <p><b>${esc(d.title)}</b><br><span class="muted small">${esc(d.ref)} · version ${esc(d.issued ? d.issued.version : d.version)} · ${esc(d.status)}</span></p>
+      <p>This permanently removes the document, its drafts and its version history from the studio${portal ? `, and it will <b>disappear from ${esc(c.name)}'s client portal</b>` : ''}. Renewal reminders for it stop.</p>
+      ${d.issued ? '<p class="notice warn small">This document has been issued. If the client should still see that it was withdrawn, use <b>Archive</b> instead: archived issued documents show as "Withdrawn" in the client portal.</p>' : ''}
+      <p class="muted small">Word files already saved to Google Drive are kept in the client\'s Drive folder for your records.</p>
+      <div class="modal-actions"><button class="btn" data-action="close-modal">Cancel</button><button class="btn danger" data-action="confirm-delete-doc" data-id="${esc(id)}">Delete permanently</button></div>`);
+  }
+
+  async function deleteDoc(id) {
+    const d = docById(id); if (!d) return;
+    await st.store.deleteDoc(id);
+    if (st.docId === id) { st.docId = null; st.work = null; st.tab = 'documents'; }
+    closeModal();
+    toast('Document deleted' + (st.store.mode === 'google' ? ' – removed from the client portal' : ''), 'ok');
+    renderAll();
   }
 
   // workflow
@@ -1035,6 +1058,10 @@
       'req-status': () => run(() => updateRequest(async (r) => { r.status = el.dataset.to; }, el.dataset.to === 'In review' ? 'Marked in review' : el.dataset.to)),
       'req-note': () => run(() => updateRequest(async () => {}, 'Note sent')),
       'req-approve': () => run(approveRequest),
+      'req-delete': () => run(async () => {
+        if (!confirm('Delete this request? It will disappear from the SAFE Inbox and from the client portal. Documents already created from it are kept.')) return;
+        await st.store.deleteRequest(st.reqId); st.reqId = null; toast('Request deleted', 'ok'); renderAll();
+      }),
       'portal-enable': () => run(() => portalSet({}, 'Client portal enabled')),
       'portal-reset': () => run(() => portalSet({}, 'PIN reset')),
       'portal-newlink': () => run(async () => { if (!confirm('Create a new link and PIN? The old link will stop working.')) return; await portalSet({ newLink: true }, 'New link and PIN'); }),
@@ -1048,7 +1075,7 @@
       'save-profile': () => run(() => saveProfile()),
       'delete-client': () => run(async () => {
         const c = client();
-        if (!confirm(`Delete ${c.name} and all its ${clientDocs().length} documents from the studio? Files already on Google Drive are not deleted.`)) return;
+        if (!confirm(`Delete ${c.name}, all its ${clientDocs().length} documents, its portal requests and its portal access? Files already on Google Drive are not deleted.`)) return;
         await st.store.deleteClient(c.id); st.clientId = null; renderAll();
       }),
       'remove-letterhead': () => run(async () => { const c = collectProfile(); c.letterhead = null; await st.store.saveClient(c); renderAll(); }),
@@ -1068,6 +1095,8 @@
       'open-doc': () => { st.view = null; if (el.dataset.client) st.clientId = el.dataset.client; closeModal(); st.docId = el.dataset.id; st.work = null; renderAll(); window.scrollTo(0, 0); },
       'back-to-client': () => { st.docId = null; st.work = null; st.tab = 'documents'; renderAll(); },
       'download-doc': () => run(() => downloadDoc(el.dataset.id)),
+      'delete-doc': () => deleteDocDialog(el.dataset.id),
+      'confirm-delete-doc': () => run(() => deleteDoc(el.dataset.id)),
       'download-version': () => run(() => downloadVersion(Number(el.dataset.idx))),
       'save-doc': () => run(() => saveDoc()),
       'wf': () => run(() => setStatus(el.dataset.to)),

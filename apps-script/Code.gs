@@ -140,6 +140,12 @@ function handle_(req) {
       db = readDb_();
       db.clients = db.clients.filter(function (c) { return c.id !== req.id; });
       db.docs = db.docs.filter(function (d) { return d.clientId !== req.id; });
+      db.requests = db.requests.filter(function (r) { return r.clientId !== req.id; });
+      writeDb_(db);
+      return { ok: true };
+    case 'deleteRequest':
+      db = readDb_();
+      db.requests = db.requests.filter(function (r) { return r.id !== req.id; });
       writeDb_(db);
       return { ok: true };
     case 'saveDoc':
@@ -265,7 +271,7 @@ function portalView_(db, c) {
         safeNote: r.safeNote || '', requestedBy: r.requestedBy || {},
         items: (r.items || []).map(function (i) {
           var d = i.docId ? byId[i.docId] : null;
-          return { type: i.type, itemId: i.itemId, title: i.title, details: i.details, included: i.included !== false, stage: d ? stageOf_(d) : null };
+          return { type: i.type, itemId: i.itemId, title: i.title, details: i.details, included: i.included !== false, stage: d ? stageOf_(d) : (i.docId ? 'Removed by SAFE Legal' : null) };
         })
       };
     })

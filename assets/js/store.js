@@ -55,7 +55,7 @@
     }
     async _save() { await kvSet('db', this.db); }
     async saveClient(c) { upsert(this.db.clients, c); await this._save(); return c; }
-    async deleteClient(id) { this.db.clients = this.db.clients.filter((c) => c.id !== id); this.db.docs = this.db.docs.filter((d) => d.clientId !== id); await this._save(); }
+    async deleteClient(id) { this.db.clients = this.db.clients.filter((c) => c.id !== id); this.db.docs = this.db.docs.filter((d) => d.clientId !== id); this.db.requests = (this.db.requests || []).filter((r) => r.clientId !== id); await this._save(); }
     async saveDoc(d) { upsert(this.db.docs, d); await this._save(); return d; }
     async saveDocs(ds) { ds.forEach((d) => upsert(this.db.docs, d)); await this._save(); }
     async deleteDoc(id) { this.db.docs = this.db.docs.filter((d) => d.id !== id); await this._save(); }
@@ -64,6 +64,7 @@
     async getFile(fileId) { const f = await kvGet('file:' + fileId); if (!f) throw new Error('File not found in this browser'); return { name: f.name, mime: f.mime, data: S.b64ToBuf(f.b64) }; }
     async runReminders() { throw new Error('Reminder emails need the Google backend. Connect it in Settings.'); }
     async saveRequest(r) { this.db.requests = this.db.requests || []; upsert(this.db.requests, r); await this._save(); return r; }
+    async deleteRequest(id) { this.db.requests = (this.db.requests || []).filter((r) => r.id !== id); await this._save(); }
     async setPortal() { throw new Error('The client portal needs the Google backend. Connect it in Settings first.'); }
     async exportAll() { return JSON.stringify(this.db, null, 2); }
   }
@@ -85,6 +86,7 @@
     }
     async load() { const r = await this.call('load'); this.db = r.db; this.db.clients = this.db.clients || []; this.db.docs = this.db.docs || []; this.db.settings = this.db.settings || {}; this.db.requests = this.db.requests || []; return this.db; }
     async saveRequest(r, notify) { await this.call('saveRequest', { request: r, notify: !!notify }); upsert(this.db.requests, r); return r; }
+    async deleteRequest(id) { await this.call('deleteRequest', { id }); this.db.requests = this.db.requests.filter((r) => r.id !== id); }
     async setPortal(clientId, opts) {
       const r = await this.call('setPortal', Object.assign({ clientId }, opts || {}));
       const c = this.db.clients.find((x) => x.id === clientId);
@@ -93,7 +95,7 @@
     }
     deploymentId() { const m = /\/macros\/s\/([^/]+)\//.exec(this.url); return m ? m[1] : ''; }
     async saveClient(c) { await this.call('saveClient', { client: c }); upsert(this.db.clients, c); return c; }
-    async deleteClient(id) { await this.call('deleteClient', { id }); this.db.clients = this.db.clients.filter((c) => c.id !== id); this.db.docs = this.db.docs.filter((d) => d.clientId !== id); }
+    async deleteClient(id) { await this.call('deleteClient', { id }); this.db.clients = this.db.clients.filter((c) => c.id !== id); this.db.docs = this.db.docs.filter((d) => d.clientId !== id); this.db.requests = (this.db.requests || []).filter((r) => r.clientId !== id); }
     async saveDoc(d) { await this.call('saveDoc', { doc: d }); upsert(this.db.docs, d); return d; }
     async saveDocs(ds) { await this.call('saveDocs', { docs: ds }); ds.forEach((d) => upsert(this.db.docs, d)); }
     async deleteDoc(id) { await this.call('deleteDoc', { id }); this.db.docs = this.db.docs.filter((d) => d.id !== id); }
