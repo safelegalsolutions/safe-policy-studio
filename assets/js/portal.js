@@ -64,11 +64,15 @@
     const flagged = d.docs.filter((x) => (x.lawFlags || []).length).length;
     const tabs = [['choose', 'Choose policies'], ['new', '+ Request a new policy'], ['requests', `My requests${d.requests.length ? ' (' + d.requests.length + ')' : ''}`], ['docs', `My documents${d.docs.length ? ' (' + d.docs.length + ')' : ''}${flagged ? ' ⚠' : ''}`]];
     if (d.features && d.features.ask) tabs.push(['ask', 'Ask a question']);
+    if (d.features && d.features.available) tabs.push(['ai', d.features.enabled ? '✨ AI assistant: on' : '✨ AI assistant']);
+    if (d.api && (d.api.offered || d.api.enabled)) tabs.push(['api', d.api.enabled ? '🔌 API access: on' : '🔌 API access']);
     let body = '';
     if (st.tab === 'new') body = viewNew();
     else if (st.tab === 'requests') body = viewRequests();
     else if (st.tab === 'docs') body = viewDocs();
     else if (st.tab === 'ask') body = viewAsk();
+    else if (st.tab === 'ai') body = viewAi();
+    else if (st.tab === 'api') body = viewApi();
     else body = viewChoose();
     const basket = st.selected.size + st.custom.length;
     m.innerHTML = `
@@ -163,6 +167,7 @@
           <label class="field">Type<select class="input" id="cKind"><option value="policy">Policy</option><option value="agreement">Agreement</option></select></label>
           <div></div>
           <label class="field span2">What should it cover? (purpose, who it applies to, any specific points)<textarea class="input" id="cDetails" rows="5" maxlength="4000">${esc(st.draftDetails || '')}</textarea>
+            ${st.data.features && !st.data.features.enabled && st.data.features.available ? '<span class="help">✨ Want help turning your words into legal terms? <button type="button" class="link-btn" data-action="tab" data-tab="ai">Switch on the AI assistant</button>.</span>' : ''}
             ${st.data.features && st.data.features.wording ? `<span class="ai-row">${st.undoText !== null ? '<button type="button" class="link-btn" data-action="undo-wording">↶ Undo</button>' : ''}<button type="button" class="link-btn ai-btn" data-action="improve-wording">✨ Improve wording</button></span><span class="help">Type in your own words; "Improve wording" turns it into clear legal terms. Please don't include personal details of employees.</span>` : ''}</label>
         </div>
         <button class="btn primary" type="submit" style="margin-top:10px">Add to my request</button>
@@ -198,6 +203,64 @@
         <td>${d.canDownload ? `<button class="btn small" data-action="download" data-id="${d.id}">Download</button>` : ''}</td></tr>`;
       }).join('')}</tbody></table></div></div>
       <p class="small muted">Documents in preparation are shared once SAFE Legal has reviewed and issued them.</p>`;
+  }
+
+  const inr = (v) => '₹' + Number(v || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  function viewAi() {
+    const d = st.data; const p = d.aiPricing || {}; const on = d.features && d.features.enabled;
+    const feats = `<ul class="small">
+        <li><b>Ask a question:</b> instant answers about your issued policies (for example, "How much leave can we carry forward?").</li>
+        <li><b>✨ Improve wording:</b> turns your own words into proper legal terms when you request a new document.</li>
+        <li><b>Change-in-law alerts:</b> a notice in your portal and an email when a change in Indian law affects one of your policies.</li></ul>`;
+    if (on) {
+      return `<div class="card"><div class="spread"><h3>✨ AI assistant is on</h3><span class="status Issued">Active</span></div>
+        <p class="small muted">Switched on ${d.aiPlan.since ? fmtDate(d.aiPlan.since.slice(0, 10)) : ''}${d.aiPlan.by ? ' by ' + esc(d.aiPlan.by) : ''}.</p>${feats}
+        <div class="notice info"><b>This month so far:</b> ${d.aiUsage.calls} AI use${d.aiUsage.calls === 1 ? '' : 's'}, about <b>${inr(d.aiUsage.amount)}</b> plus GST (${p.gstPct}%).</div>
+        <p class="small muted" style="margin-top:8px">${esc(p.terms || '')}</p>
+        <button class="btn danger small" data-action="ai-off">Switch off the AI assistant</button></div>`;
+    }
+    return `<div class="card"><h3>✨ AI assistant (optional, billed by usage)</h3>
+      <p>Without the AI assistant you keep the full standard service: choosing and requesting policies, progress tracking and downloads. With it, you also get:</p>${feats}
+      <div class="notice info"><b>What it costs:</b> SAFE Legal charges Anthropic's AI (Claude) usage charge plus SAFE's margin of ${p.marginPct}%, plus GST at ${p.gstPct}%.${p.minFee ? ` Minimum ${inr(p.minFee)} per month.` : ''}<br>
+      <b>Typical cost: ${inr(p.estimateLow)} – ${inr(p.estimateHigh)} per month</b> plus GST, depending on how much you use it. About ${inr(p.perQuestion)} per question and ${inr(p.perWording)} per wording improvement, before GST. You can see your usage here at any time and switch it off whenever you like.</div>
+      <form data-form="ai-on" style="margin-top:12px"><div class="grid2">
+        <label class="field">Your name <span class="req">*</span><input class="input" id="aiName" required maxlength="120"></label>
+        <label class="field">Your email<input class="input" id="aiEmail" type="email" maxlength="160"></label></div>
+        <label class="small" style="display:block;margin-top:8px"><input type="checkbox" id="aiAccept" required> I am authorised to agree, and I accept: ${esc(p.terms || '')}</label>
+        <button class="btn primary" type="submit" style="margin-top:10px">Switch on the AI assistant</button></form>
+      <p class="small muted" style="margin-top:10px">Answers are generated by AI from your own policies and are not legal advice. What you type is processed by Anthropic (Claude) for SAFE Legal; please don't enter employees' personal details.</p></div>`;
+  }
+
+  function guideUrl() { return `api.html?d=${encodeURIComponent(DEPLOYMENT)}`; }
+  function viewApi() {
+    const a = st.data.api || {};
+    const fee = a.monthlyFee ? `<b>₹${Number(a.monthlyFee).toLocaleString('en-IN')} per month</b> plus GST (${a.gstPct}%)` : '<b>no separate monthly fee</b> at present';
+    const what = `<ul class="small"><li>Show your <b>issued policies</b> (latest versions and Word files) inside your own HR, payroll or intranet software.</li>
+      <li>Receive <b>renewal reminders</b>${st.data.features && st.data.features.enabled ? ' and <b>change-in-law alerts</b>' : ''} automatically.</li>
+      <li>Send <b>requests</b> to SAFE Legal from your own systems${st.data.features && st.data.features.enabled ? ', and ask questions about your policies (billed under the AI assistant)' : ''}.</li></ul>`;
+    if (!a.enabled) {
+      return `<div class="card"><h3>🔌 API access (optional)</h3>
+        <p>For companies whose IT team wants to connect their own software to SAFE Legal. You don't need this to use the portal.</p>${what}
+        <div class="notice info">Charges: ${fee}. API questions are billed under the AI assistant.</div>
+        ${a.requestedAt ? `<div class="notice warn" style="margin-top:10px">You requested API access on ${fmtDate(a.requestedAt.slice(0, 10))}. SAFE Legal will switch it on and let you know.</div>` : `
+        <form data-form="api-req" style="margin-top:12px"><div class="grid2">
+          <label class="field">Your name <span class="req">*</span><input class="input" id="apName" required maxlength="120"></label>
+          <label class="field">Your email <span class="req">*</span><input class="input" id="apEmail" type="email" required maxlength="160"></label>
+          <label class="field">Software you want to connect<input class="input" id="apSoftware" maxlength="120" placeholder="e.g. Keka, Zoho People, our intranet"></label>
+          <label class="field">Phone<input class="input" id="apPhone" maxlength="40"></label>
+          <label class="field span2">What will you use it for?<textarea class="input" id="apPurpose" rows="3" maxlength="2000"></textarea></label></div>
+          <button class="btn primary" type="submit" style="margin-top:10px">Request API access</button></form>`}
+        <p class="small" style="margin-top:10px"><a href="${guideUrl()}" target="_blank" rel="noopener">Read the API guide</a></p></div>`;
+    }
+    const keys = (a.keys || []);
+    return `<div class="card"><div class="spread"><h3>🔌 API access is on</h3><span class="status Issued">Active</span></div>${what}
+      <p class="small">Calls this month: <b>${a.callsThisMonth}</b> (limit ${Number(a.dailyLimit).toLocaleString('en-IN')} per day). Charges: ${fee}.</p>
+      <h3 style="margin-top:12px">Your API keys</h3>
+      <table class="table"><thead><tr><th>Name</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody>
+      ${keys.map((k) => `<tr><td><b>${esc(k.name)}</b><div class="small muted">${esc(k.prefix)}…</div></td><td class="small">${fmtDate((k.createdAt || '').slice(0, 10))}</td><td class="small">${k.lastUsedAt ? fmtDate(k.lastUsedAt.slice(0, 10)) : '—'}</td><td>${k.revokedAt ? '<span class="status Archived">Revoked</span>' : `<button class="btn small danger" data-action="api-revoke" data-key="${esc(k.id)}">Revoke</button>`}</td></tr>`).join('') || '<tr><td colspan="4" class="muted small">No keys yet.</td></tr>'}
+      </tbody></table>
+      <form data-form="api-key" class="row" style="margin-top:10px"><input class="input" id="apKeyName" maxlength="80" placeholder="Key name, e.g. HRMS production" style="max-width:320px" required><button class="btn primary small" type="submit">Create a key</button></form>
+      <p class="small muted" style="margin-top:8px">Keep keys secret: anyone with a key can read your policies. Revoke a key at once if it is exposed. <a href="${guideUrl()}" target="_blank" rel="noopener">API guide and examples</a></p></div>`;
   }
 
   function viewAsk() {
@@ -277,6 +340,24 @@
       toast('Added – click "Review and submit" at the bottom to send it to SAFE Legal', 'ok'); render();
     }
     if (k === 'submit') run(submitRequest);
+    if (k === 'api-req') run(async () => {
+      const out = await api('portalRequestApi', { session: st.session, name: $('#apName').value.trim(), email: $('#apEmail').value.trim(), phone: $('#apPhone').value.trim(), software: $('#apSoftware').value.trim(), purpose: $('#apPurpose').value.trim() });
+      st.data = out.data; render(); toast('API access requested – SAFE Legal has been informed', 'ok');
+    });
+    if (k === 'api-key') run(async () => {
+      const out = await api('portalCreateApiKey', { session: st.session, name: $('#apKeyName').value.trim() });
+      st.data = out.data; render();
+      openModal('Your new API key', `<p><b>Copy this key now.</b> For your security it is shown only once. Store it in your software's settings, never in emails or chats.</p><input class="input" readonly id="newKey" value="${esc(out.key.key)}" style="font-family:monospace"><div class="modal-actions"><button class="btn" data-action="copy-key">Copy</button><button class="btn primary" data-action="close-modal">I have saved it</button></div>`);
+    });
+    if (k === 'ai-off') run(async () => {
+      const out = await api('portalSetAi', { session: st.session, enable: false, name: $('#aiOffName').value.trim() });
+      st.data = out.data; closeModal(); st.tab = 'ai'; render(); toast('AI assistant switched off', 'ok');
+    });
+    if (k === 'ai-on') run(async () => {
+      if (!$('#aiAccept').checked) throw new Error('Please tick the box to accept the AI charges.');
+      const out = await api('portalSetAi', { session: st.session, enable: true, accept: true, name: $('#aiName').value.trim(), email: $('#aiEmail').value.trim() });
+      st.data = out.data; render(); toast('AI assistant switched on', 'ok');
+    });
     if (k === 'ask') run(async () => {
       const q = $('#askQ').value.trim(); if (q.length < 5) throw new Error('Please type your question.');
       st.lastQ = q; st.asking = true; render();
@@ -298,6 +379,9 @@
     else if (a === 'close-modal') closeModal();
     else if (a === 'review') reviewDialog();
     else if (a === 'withdraw') withdrawDialog(el.dataset.id);
+    else if (a === 'copy-key') { const f = $('#newKey'); navigator.clipboard.writeText(f.value).then(() => toast('Key copied', 'ok'), () => f.select()); }
+    else if (a === 'api-revoke') run(async () => { if (!confirm('Revoke this key? Software using it stops working immediately.')) return; const out = await api('portalRevokeApiKey', { session: st.session, keyId: el.dataset.key }); st.data = out.data; render(); toast('Key revoked', 'ok'); });
+    else if (a === 'ai-off') openModal('Switch off the AI assistant?', `<p>AI features stop straight away and no further AI use is billed. Usage so far this month is still billed.</p><form data-form="ai-off"><label class="field">Your name<input class="input" id="aiOffName" maxlength="120"></label><div class="modal-actions"><button type="button" class="btn" data-action="close-modal">Keep it on</button><button class="btn danger" type="submit">Switch off</button></div></form>`);
     else if (a === 'pick-reco') { (st.data.recommendations || []).forEach((x) => { if (!x.off && S.itemById(x.id) && !docForItem(x.id) && !pendingForItem(x.id)) st.selected.add(x.id); }); render(); }
     else if (a === 'ask-to-safe') {
       st.custom.push({ title: 'Question: ' + (st.lastQ || '').slice(0, 250), kind: 'question', details: st.lastQ || '' });

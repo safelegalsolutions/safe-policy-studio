@@ -90,7 +90,11 @@ function clientFolder_(db, clientId) {
 }
 
 // ---------------------------------------------------------------- web API
-function doGet() {
+function doGet(e) {
+  var p = (e && e.parameter) || {};
+  if (p.op) {
+    try { return json_(apiHandle_(String(p.op), p)); } catch (err) { return json_({ ok: false, error: String(err && err.message || err) }); }
+  }
   return json_({ ok: true, app: 'SAFE Policy Studio backend' });
 }
 
@@ -106,6 +110,9 @@ function withLock_(fn) {
 function doPost(e) {
   var req;
   try { req = JSON.parse(e.postData.contents); } catch (err) { return json_({ ok: false, error: 'Bad request' }); }
+  if (req.action === 'api') {
+    try { return json_(apiHandle_(String(req.op || ''), req)); } catch (errA) { return json_({ ok: false, error: String(errA && errA.message || errA) }); }
+  }
   var isPortal = /^portal/.test(String(req.action || ''));
   if (!isPortal) {
     var key = PropertiesService.getScriptProperties().getProperty('API_KEY');
@@ -133,9 +140,10 @@ function handle_(req) {
     case 'load':
       db = readDb_();
       db.clients = db.clients.map(function (c) {
-        if (!c.portal) return c;
+        if (!c.portal && !c.api) return c;
         var copy = JSON.parse(JSON.stringify(c));
-        delete copy.portal.pinHash; delete copy.portal.salt;
+        if (copy.portal) { delete copy.portal.pinHash; delete copy.portal.salt; }
+        if (copy.api && copy.api.keys) copy.api.keys.forEach(function (k) { delete k.hash; });
         return copy;
       });
       delete db.lawSeen;
@@ -147,6 +155,10 @@ function handle_(req) {
       var existing = db.clients.filter(function (c) { return c.id === req.client.id; })[0];
       if (existing && existing.portal) req.client.portal = existing.portal; // portal access is changed only through setPortal
       else delete req.client.portal;
+      if (existing && existing.aiPlan) req.client.aiPlan = existing.aiPlan; // AI plan is changed only through setAiPlan / the portal
+      else delete req.client.aiPlan;
+      if (existing && existing.api) req.client.api = existing.api; // API access and keys are changed only through the API actions
+      else delete req.client.api;
       upsert_(db.clients, req.client);
       clientFolder_(db, req.client.id);
       writeDb_(db);
@@ -237,11 +249,54 @@ function handle_(req) {
       writeDb_(db);
       return { ok: true };
     case 'aiDraft':
-      return { ok: true, draft: aiDraft_(req) };
+      return { ok: true, draft: aiDraft_(req, { clientId: req.clientId, feature: 'Draft with AI' }) };
     case 'aiLegalise':
-      return { ok: true, text: aiLegalise_(req.text, req.context || {}, 'studio') };
+      return { ok: true, text: aiLegalise_(req.text, req.context || {}, 'studio', { clientId: req.clientId, feature: 'Legal wording (SAFE)' }) };
     case 'aiRecommend':
-      return { ok: true, items: aiRecommend_(req.profile || {}, req.catalog || []) };
+      return { ok: true, items: aiRecommend_(req.profile || {}, req.catalog || [], { clientId: req.clientId, feature: 'Recommendations' }) };
+    case 'setApiAccess': {
+      db = readDb_();
+      var xc = db.clients.filter(function (c) { return c.id === req.clientId; })[0];
+      if (!xc) return { ok: false, error: 'Client not found' };
+      xc.api = Object.assign({}, xc.api || {}, { enabled: !!req.enabled });
+      if (req.enabled) xc.api.since = xc.api.since || new Date().toISOString();
+      else { xc.api.endedAt = new Date().toISOString(); (xc.api.keys || []).forEach(function (k) { if (!k.revokedAt) { k.revokedAt = new Date().toISOString(); k.revokedBy = 'SAFE (API access switched off)'; } }); }
+      writeDb_(db);
+      var sx = settings_(db);
+      if (req.enabled && req.notify) {
+        var toX = validEmails_(xc.reminderEmails).join(',');
+        if (toX) safeMail_({ to: toX, cc: sx.safeCc, replyTo: sx.safeTo, name: sx.senderName, subject: 'API access is ready – SAFE Legal Solutions',
+          htmlBody: '<div style="font-family:Arial,sans-serif;font-size:14px"><p>Dear ' + esc_(xc.contactName || 'Sir / Madam') + ',</p><p>API access has been switched on for <b>' + esc_(xc.name) + '</b>. Sign in to your client portal and open <b>API access</b> to create a key and read the API guide.</p>' + (sx.apiMonthlyFee ? '<p>API access is charged at ₹' + sx.apiMonthlyFee + ' per month plus GST.</p>' : '') + '<p>Regards,<br>SAFE Legal Solutions</p></div>' });
+      }
+      return { ok: true, api: publicApi_(xc) };
+    }
+    case 'createApiKey': {
+      db = readDb_();
+      var yc = db.clients.filter(function (c) { return c.id === req.clientId; })[0];
+      if (!yc || !(yc.api && yc.api.enabled)) return { ok: false, error: 'Switch on API access for this client first.' };
+      var mk = makeApiKey_(yc, clip_(req.name, 80) || 'API key', 'SAFE Legal');
+      writeDb_(db);
+      return { ok: true, key: mk, api: publicApi_(yc) };
+    }
+    case 'revokeApiKey': {
+      db = readDb_();
+      var zc = db.clients.filter(function (c) { return c.id === req.clientId; })[0];
+      if (!zc) return { ok: false, error: 'Client not found' };
+      revokeApiKey_(zc, req.keyId, 'SAFE Legal');
+      writeDb_(db);
+      return { ok: true, api: publicApi_(zc) };
+    }
+    case 'setAiPlan': {
+      db = readDb_();
+      var apc = db.clients.filter(function (c) { return c.id === req.clientId; })[0];
+      if (!apc) return { ok: false, error: 'Client not found' };
+      apc.aiPlan = Object.assign({}, apc.aiPlan || {}, req.enabled
+        ? { enabled: true, since: new Date().toISOString(), by: 'SAFE Legal (on the client\'s instruction)', note: clip_(req.note, 300) }
+        : { enabled: false, endedAt: new Date().toISOString(), endedBy: 'SAFE Legal' });
+      apc.aiPlan.log = ((apc.aiPlan.log || []).concat([{ at: new Date().toISOString(), enabled: !!req.enabled, by: 'SAFE Legal' }])).slice(-50);
+      writeDb_(db);
+      return { ok: true, aiPlan: apc.aiPlan };
+    }
     case 'lawWatchRun':
       return { ok: true, result: lawWatchRun_(!!req.dryRun) };
     case 'lawAnalyse':
@@ -318,7 +373,20 @@ function portalView_(db, c) {
   return {
     client: { name: c.name, industry: c.industry, industryOther: c.industryOther || '', states: c.states || '' },
     contact: { email: s.safeTo },
-    features: { ask: !!(s.portalAsk && aiStatus_().configured), wording: !!(s.portalWording && aiStatus_().configured) },
+    features: (function () {
+      var avail = !!(s.aiForClients && PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY'));
+      var on = !!(c.aiPlan && c.aiPlan.enabled);
+      return { available: avail, enabled: avail && on, ask: avail && on && !!s.portalAsk, wording: avail && on && !!s.portalWording, lawAlerts: avail && on };
+    })(),
+    aiPlan: { enabled: !!(c.aiPlan && c.aiPlan.enabled), since: c.aiPlan && c.aiPlan.since || '', by: c.aiPlan && c.aiPlan.by || '' },
+    aiPricing: aiPricingInfo_(s),
+    aiUsage: aiUsageView_(db, s, c.id),
+    api: (function () {
+      var a = c.api || {};
+      var month = Utilities.formatDate(new Date(), DEFAULTS.TZ, 'yyyy-MM');
+      var u = (db.apiUsage && db.apiUsage[c.id] && db.apiUsage[c.id][month]) || { calls: 0 };
+      return { offered: !!s.apiForClients, enabled: !!a.enabled, requestedAt: a.requestedAt || '', since: a.since || '', keys: publicApi_(c).keys, callsThisMonth: u.calls, monthlyFee: s.apiMonthlyFee, dailyLimit: s.apiDailyLimit, gstPct: s.gstPct };
+    })(),
     recommendations: (c.recommendations && c.recommendations.published) ? c.recommendations.items || [] : [],
     docs: docs.filter(function (d) { return d.status !== 'Archived' || d.issued; }).map(function (d) {
       return {
@@ -327,7 +395,7 @@ function portalView_(db, c) {
         effectiveDate: d.issued ? d.issued.effectiveDate : null,
         expiryDate: d.issued ? d.issued.expiryDate : null,
         canDownload: !!(d.issued && d.issued.fileId),
-        lawFlags: (d.lawFlags || []).filter(function (f) { return !f.resolved; }).map(function (f) { return { title: f.title, summary: f.summary, at: f.at }; })
+        lawFlags: (c.aiPlan && c.aiPlan.enabled) ? (d.lawFlags || []).filter(function (f) { return !f.resolved; }).map(function (f) { return { title: f.title, summary: f.summary, at: f.at }; }) : []
       };
     }),
     requests: db.requests.filter(function (r) { return r.clientId === c.id && !r.clientHidden; }).map(function (r) {
@@ -370,25 +438,36 @@ function handlePortal_(req) {
         return { ok: true };
       case 'portalRequest': {
         var pc = portalClient_(db, req.session);
-        var items = (req.items || []).slice(0, 300).map(function (i) {
-          return { type: 'library', itemId: clip_(i.itemId, 80), title: clip_(i.title, 300) };
-        }).filter(function (i) { return i.itemId; });
-        var custom = (req.custom || []).slice(0, 30).map(function (x) {
-          return { type: 'custom', kind: x.kind === 'agreement' ? 'agreement' : x.kind === 'question' ? 'question' : 'policy', title: clip_(x.title, 300), details: clip_(x.details, 4000) };
-        }).filter(function (x) { return x.title; });
-        if (!items.length && !custom.length) return { ok: false, error: 'Please select at least one document or describe a new one.' };
-        var by = req.requestedBy || {};
-        var r = {
-          id: 'req_' + randomToken_().slice(0, 12), clientId: pc.id, createdAt: new Date().toISOString(), status: 'New',
-          items: items.concat(custom), note: clip_(req.note, 4000), urgency: req.urgency === 'Urgent' ? 'Urgent' : 'Normal',
-          neededBy: /^\d{4}-\d{2}-\d{2}$/.test(String(req.neededBy || '')) ? String(req.neededBy) : '',
-          requestedBy: { name: clip_(by.name, 120), email: validEmails_(clip_(by.email, 160))[0] || '', emailEntered: clip_(by.email, 160), phone: clip_(by.phone, 40) },
-          history: [{ at: new Date().toISOString(), by: 'Client', action: 'Submitted' }]
-        };
+        var r = buildRequest_(pc, req, 'Client portal');
+        if (r.error) return { ok: false, error: r.error };
         db.requests.push(r);
         writeDb_(db);
         notifySafeOfRequest_(db, pc, r);
         return { ok: true, id: r.id, data: portalView_(db, pc) };
+      }
+      case 'portalRequestApi': {
+        var qc = portalClient_(db, req.session);
+        if (!settings_(db).apiForClients) return { ok: false, error: 'API access is not offered at the moment.' };
+        var qr = buildRequest_(qc, { custom: [{ kind: 'api', title: 'API access for ' + clip_(req.software || 'our software', 120), details: clip_(req.purpose, 2000) }], requestedBy: { name: req.name, email: req.email, phone: req.phone }, note: clip_(req.note, 2000) }, 'Client portal');
+        if (qr.error) return { ok: false, error: qr.error };
+        db.requests.push(qr);
+        qc.api = Object.assign({}, qc.api || {}, { requestedAt: new Date().toISOString() });
+        writeDb_(db);
+        notifySafeOfRequest_(db, qc, qr);
+        return { ok: true, data: portalView_(db, qc) };
+      }
+      case 'portalCreateApiKey': {
+        var kc = portalClient_(db, req.session);
+        if (!(kc.api && kc.api.enabled)) return { ok: false, error: 'API access has not been switched on for your company yet.' };
+        var made = makeApiKey_(kc, clip_(req.name, 80) || 'API key', 'Client portal');
+        writeDb_(db);
+        return { ok: true, key: made, data: portalView_(db, kc) };
+      }
+      case 'portalRevokeApiKey': {
+        var rc = portalClient_(db, req.session);
+        revokeApiKey_(rc, req.keyId, 'Client portal');
+        writeDb_(db);
+        return { ok: true, data: portalView_(db, rc) };
       }
       case 'portalWithdraw': {
         var wc = portalClient_(db, req.session);
@@ -406,19 +485,40 @@ function handlePortal_(req) {
         notifySafeOfWithdrawal_(db, wc, wr);
         return { ok: true, data: portalView_(db, wc) };
       }
+      case 'portalSetAi': {
+        var sc = portalClient_(db, req.session);
+        var st0 = settings_(db);
+        if (!st0.aiForClients || !PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY')) return { ok: false, error: 'The AI assistant is not available at the moment.' };
+        var on = !!req.enable;
+        if (on && !req.accept) return { ok: false, error: 'Please accept the AI charges to switch the AI assistant on.' };
+        var who = { name: clip_(req.name, 120), email: validEmails_(clip_(req.email, 160))[0] || '' };
+        if (on && !who.name) return { ok: false, error: 'Please enter your name.' };
+        sc.aiPlan = Object.assign({}, sc.aiPlan || {}, on
+          ? { enabled: true, since: new Date().toISOString(), by: who.name, email: who.email, terms: aiTermsText_(st0) }
+          : { enabled: false, endedAt: new Date().toISOString(), endedBy: who.name || 'Client' });
+        sc.aiPlan.log = ((sc.aiPlan.log || []).concat([{ at: new Date().toISOString(), enabled: on, by: who.name || 'Client', email: who.email }])).slice(-50);
+        writeDb_(db);
+        safeMail_({ to: st0.safeTo, cc: st0.safeCc, name: st0.senderName, subject: 'AI assistant ' + (on ? 'switched ON' : 'switched off') + ' by ' + sc.name,
+          htmlBody: '<div style="font-family:Arial,sans-serif;font-size:14px"><p><b>' + esc_(sc.name) + '</b> has ' + (on ? 'switched ON the AI assistant (billable)' : 'switched off the AI assistant') + ' in its client portal.</p><p>By: ' + esc_(who.name) + ' ' + esc_(who.email) + '</p>' + (on ? '<p>Terms accepted: ' + esc_(aiTermsText_(st0)) + '</p>' : '') + '</div>' });
+        if (on && who.email) safeMail_({ to: who.email, replyTo: st0.safeTo, name: st0.senderName, subject: 'AI assistant switched on – SAFE Legal Solutions',
+          htmlBody: '<div style="font-family:Arial,sans-serif;font-size:14px"><p>Dear ' + esc_(who.name) + ',</p><p>The AI assistant is now on for ' + esc_(sc.name) + '. ' + esc_(aiTermsText_(st0)) + '</p><p>You can switch it off at any time in your client portal.</p><p>Regards,<br>SAFE Legal Solutions</p></div>' });
+        return { ok: true, data: portalView_(db, sc) };
+      }
       case 'portalAsk': {
         var ac = portalClient_(db, req.session);
+        if (!(ac.aiPlan && ac.aiPlan.enabled)) return { ok: false, error: 'Switch on the AI assistant to ask questions.' };
         if (!settings_(db).portalAsk) return { ok: false, error: 'Questions are not switched on for this portal.' };
         if (!PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY')) return { ok: false, error: 'This feature is not available at the moment. Please write to SAFE Legal.' };
         aiRateLimit_(ac.id, 'ask', 40);
-        return { ok: true, answer: portalAsk_(db, ac, clip_(req.question, 1000)) };
+        return { ok: true, answer: portalAsk_(db, ac, clip_(req.question, 1000), { clientId: ac.id, feature: 'Questions (client)' }) };
       }
       case 'portalLegalise': {
         var lc = portalClient_(db, req.session);
+        if (!(lc.aiPlan && lc.aiPlan.enabled)) return { ok: false, error: 'Switch on the AI assistant to use this.' };
         if (!settings_(db).portalWording) return { ok: false, error: 'Wording help is not switched on for this portal.' };
         if (!PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY')) return { ok: false, error: 'This feature is not available at the moment. Please write to SAFE Legal.' };
         aiRateLimit_(lc.id, 'word', 40);
-        return { ok: true, text: aiLegalise_(clip_(req.text, 4000), { title: clip_(req.title, 300), kind: req.kind === 'agreement' ? 'agreement' : 'policy', industry: lc.industry }, 'request') };
+        return { ok: true, text: aiLegalise_(clip_(req.text, 4000), { title: clip_(req.title, 300), kind: req.kind === 'agreement' ? 'agreement' : 'policy', industry: lc.industry }, 'request', { clientId: lc.id, feature: 'Improve wording (client)' }) };
       }
       case 'portalDownload': {
         var dc = portalClient_(db, req.session);
@@ -436,6 +536,25 @@ function handlePortal_(req) {
     if (msg === 'SESSION_EXPIRED') return { ok: false, error: 'Your session has expired. Please sign in again.', expired: true };
     return { ok: false, error: msg };
   }
+}
+
+function buildRequest_(c, req, channel) {
+  var items = (req.items || []).slice(0, 300).map(function (i) {
+    return { type: 'library', itemId: clip_(i.itemId, 80), title: clip_(i.title, 300) };
+  }).filter(function (i) { return i.itemId; });
+  var custom = (req.custom || []).slice(0, 30).map(function (x) {
+    var kind = ['agreement', 'question', 'api'].indexOf(x.kind) >= 0 ? x.kind : 'policy';
+    return { type: 'custom', kind: kind, title: clip_(x.title, 300), details: clip_(x.details, 4000) };
+  }).filter(function (x) { return x.title; });
+  if (!items.length && !custom.length) return { error: 'Please select at least one document or describe a new one.' };
+  var by = req.requestedBy || {};
+  return {
+    id: 'req_' + randomToken_().slice(0, 12), clientId: c.id, createdAt: new Date().toISOString(), status: 'New', channel: channel,
+    items: items.concat(custom), note: clip_(req.note, 4000), urgency: req.urgency === 'Urgent' ? 'Urgent' : 'Normal',
+    neededBy: /^\d{4}-\d{2}-\d{2}$/.test(String(req.neededBy || '')) ? String(req.neededBy) : '',
+    requestedBy: { name: clip_(by.name, 120), email: validEmails_(clip_(by.email, 160))[0] || '', emailEntered: clip_(by.email, 160), phone: clip_(by.phone, 40) },
+    history: [{ at: new Date().toISOString(), by: channel === 'API' ? 'Client (API)' : 'Client', action: 'Submitted' }]
+  };
 }
 
 function requestItemsHtml_(r) {
@@ -512,7 +631,16 @@ function settings_(db) {
     lawWatch: s.lawWatch !== false,
     lawSources: s.lawSources || DEFAULT_LAW_SOURCES,
     modelMain: s.modelMain || 'claude-sonnet-5-5',
-    modelFast: s.modelFast || 'claude-haiku-5-5'
+    modelFast: s.modelFast || 'claude-haiku-5-5',
+    aiForClients: s.aiForClients !== false,
+    apiForClients: s.apiForClients !== false,
+    apiMonthlyFee: Number(s.apiMonthlyFee || 0),
+    apiDailyLimit: Number(s.apiDailyLimit || 1000),
+    usdInr: Number(s.usdInr || 95),
+    marginPct: s.marginPct === undefined || s.marginPct === '' ? 30 : Number(s.marginPct),
+    gstPct: s.gstPct === undefined || s.gstPct === '' ? 18 : Number(s.gstPct),
+    aiMinFee: Number(s.aiMinFee || 0),
+    aiPrices: s.aiPrices || DEFAULT_AI_PRICES
   };
 }
 
@@ -660,6 +788,9 @@ function claude_(o) {
     var text = res.getContentText();
     if (code === 200) {
       var out = JSON.parse(text);
+      if (o.meter && out.usage) {
+        try { recordUsage_(o.meter, body.model, Number(out.usage.input_tokens || 0) + Number(out.usage.cache_read_input_tokens || 0) + Number(out.usage.cache_creation_input_tokens || 0), Number(out.usage.output_tokens || 0)); } catch (eU) { Logger.log('Usage not recorded: ' + eU); }
+      }
       return (out.content || []).filter(function (c) { return c.type === 'text'; }).map(function (c) { return c.text; }).join('').trim();
     }
     last = code + ' ' + text.slice(0, 300);
@@ -691,7 +822,7 @@ function aiRateLimit_(clientId, kind, max) {
 }
 
 // ---------------------------------------------------------------- drafting
-function aiDraft_(req) {
+function aiDraft_(req, meter) {
   var isAgr = req.kind === 'agreement';
   var prompt = 'Draft the operative provisions of the following ' + (isAgr ? 'agreement' : 'policy') + ' for an Indian company.\n\n' +
     'Document: ' + clip_(req.title, 300) + '\nLibrary section: ' + clip_(req.section, 200) + '\n' +
@@ -704,30 +835,30 @@ function aiDraft_(req) {
       : '- Operative sections of the policy: definitions where useful, the rules, the procedure step by step, timelines, records, and any legal requirements that apply given the industry, states and headcount. Do NOT include sections titled Purpose, Scope, Roles and responsibilities, Breach, or Review (added automatically).\n') +
     '- Then, separately, a one-paragraph purpose statement.\n\n' +
     'Reply in exactly this format:\nPURPOSE:\n<purpose paragraph>\n===BODY===\n<operative provisions in the markup>';
-  var out = claude_({ system: LEGAL_STYLE + '\n\n' + MARKUP_RULES, prompt: prompt, maxTokens: 6000 });
+  var out = claude_({ system: LEGAL_STYLE + '\n\n' + MARKUP_RULES, prompt: prompt, maxTokens: 6000, meter: meter });
   var parts = out.split('===BODY===');
   var purpose = (parts.length > 1 ? parts[0] : '').replace(/^\s*PURPOSE:\s*/i, '').trim();
   var body = (parts.length > 1 ? parts[1] : out).trim();
   return { purpose: purpose, body: body };
 }
 
-function aiLegalise_(text, ctx, mode) {
+function aiLegalise_(text, ctx, mode, meter) {
   text = String(text || '').trim();
   if (!text) throw new Error('Type something first.');
   var system = mode === 'request'
     ? LEGAL_STYLE + '\nYou help a client of SAFE Legal Solutions describe the document they need. Rewrite their words as a clear, well-structured instruction to the law firm, using correct legal terminology, keeping every point they made and adding nothing they did not ask for. Plain text with "- " bullets is fine. Reply with the rewritten text only.'
     : LEGAL_STYLE + '\n' + MARKUP_RULES + '\nRewrite the lawyer\'s rough notes as properly drafted clauses for the document named below. Keep the meaning, keep every point, do not add new obligations, and use ??...?? for any missing number, period or name. Reply with the drafted text only.';
   var prompt = 'Document: ' + clip_(ctx.title || '', 300) + ' (' + (ctx.kind || 'policy') + ')' + (ctx.industry ? '; industry: ' + clip_(ctx.industry, 100) : '') + '\n\nText to rewrite:\n' + text;
-  return claude_({ system: system, prompt: prompt, maxTokens: 2500 });
+  return claude_({ system: system, prompt: prompt, maxTokens: 2500, meter: meter });
 }
 
 // ---------------------------------------------------------------- recommendations
-function aiRecommend_(profile, catalog) {
+function aiRecommend_(profile, catalog, meter) {
   var list = catalog.slice(0, 400).map(function (i) { return i.id + ' | ' + i.title + ' | ' + i.tag; }).join('\n');
   var prompt = 'Company profile:\n' + JSON.stringify(profile).slice(0, 3000) + '\n\nAvailable documents (id | title | tag M=mandatory by law, I=industry/regulator, R=recommended):\n' + list +
     '\n\nChoose the documents this company should have, most important first (at most 30). For each give a one-sentence reason a business owner understands, naming the law or regulator and any threshold that makes it apply (for example headcount or state). Only use ids from the list.\n' +
     'Reply with a JSON array only: [{"id": "...", "priority": "high|medium|low", "reason": "..."}]';
-  var arr = parseJson_(claude_({ system: LEGAL_STYLE, prompt: prompt, maxTokens: 4000 }));
+  var arr = parseJson_(claude_({ system: LEGAL_STYLE, prompt: prompt, maxTokens: 4000, meter: meter }));
   var ids = {};
   catalog.forEach(function (i) { ids[i.id] = true; });
   return (arr || []).filter(function (x) { return x && ids[x.id]; }).map(function (x) {
@@ -736,7 +867,7 @@ function aiRecommend_(profile, catalog) {
 }
 
 // ---------------------------------------------------------------- client Q&A
-function portalAsk_(db, c, question) {
+function portalAsk_(db, c, question, meter) {
   question = String(question || '').trim();
   if (question.length < 5) throw new Error('Please type your question.');
   var docs = db.docs.filter(function (d) { return d.clientId === c.id && d.status === 'Issued' && d.issued && d.issued.textFileId; });
@@ -755,7 +886,7 @@ function portalAsk_(db, c, question) {
     'Answer ONLY from those policies, in plain English, in at most 150 words, and name the policy and clause you relied on. ' +
     'If the policies do not answer the question, or the question asks for legal advice or about a specific dispute, say clearly that the policies do not cover it and that the question should be sent to SAFE Legal. Do not guess and do not use outside knowledge. ' +
     'End your reply with a line "ANSWERED: yes" or "ANSWERED: no".';
-  var out = claude_({ system: system, prompt: 'Policies:\n' + context + '\n\nQuestion: ' + question, maxTokens: 700 });
+  var out = claude_({ system: system, prompt: 'Policies:\n' + context + '\n\nQuestion: ' + question, maxTokens: 700, meter: meter });
   var answered = /ANSWERED:\s*yes/i.test(out);
   return { text: out.replace(/ANSWERED:\s*(yes|no)\s*$/i, '').trim(), sources: scored.map(function (x) { return x.d.title; }), answered: answered };
 }
@@ -854,7 +985,7 @@ function analyseLawItems_(db, fresh) {
     fresh.map(function (f, i) { return '[' + i + '] ' + f.source + ' | ' + f.date + ' | ' + f.title + ' | ' + f.description; }).join('\n') +
     '\n\nReply with a JSON array containing ONLY the relevant publications: [{"index": 0, "title": "short title", "summary": "2-3 plain-English sentences on what changed and for whom", "action": "what companies must do, if anything", "effectiveDate": "YYYY-MM-DD or empty", "urgency": "high|medium|low", "affectedItemIds": ["ids from the library"], "industries": ["e.g. all, insurance, banking, IT"]}]. Reply [] if none are relevant.';
   var arr = [];
-  try { arr = parseJson_(claude_({ system: LEGAL_STYLE, prompt: prompt, maxTokens: 4000, fast: true })); } catch (e) { Logger.log('Law analysis failed: ' + e); arr = []; }
+  try { arr = parseJson_(claude_({ system: LEGAL_STYLE, prompt: prompt, maxTokens: 4000, fast: true, meter: { clientId: 'SAFE', feature: 'Law watch (daily)' } })); } catch (e) { Logger.log('Law analysis failed: ' + e); arr = []; }
   var ids = {};
   ((db.catalog && db.catalog.items) || []).forEach(function (i) { ids[i.id] = i.title; });
   return (arr || []).filter(function (x) { return x && fresh[x.index]; }).map(function (x) {
@@ -880,7 +1011,7 @@ function lawAnalyseManual_(req) {
   var prompt = 'A lawyer at SAFE Legal pasted the following Indian law change (circular, notification, amendment or judgment):\n\n' + text +
     '\n\nLibrary of documents SAFE prepares (id | title):\n' + catalogLines_(db) +
     '\n\nReply with a JSON object: {"title": "short title", "summary": "2-4 plain-English sentences on what changed and for whom", "action": "what companies must do, and by when", "effectiveDate": "YYYY-MM-DD or empty", "urgency": "high|medium|low", "affectedItemIds": ["ids from the library whose text may need to change"], "industries": ["all" or sectors]}';
-  var x = parseJson_(claude_({ system: LEGAL_STYLE, prompt: prompt, maxTokens: 2500 }));
+  var x = parseJson_(claude_({ system: LEGAL_STYLE, prompt: prompt, maxTokens: 2500, meter: { clientId: 'SAFE', feature: 'Law change analysis' } }));
   var ids = {};
   ((db.catalog && db.catalog.items) || []).forEach(function (i) { ids[i.id] = i.title; });
   var u = lawUpdateFrom_(x, clip_(req.source, 120) || 'Added by SAFE', clip_(req.link, 500), clip_(req.date, 40), ids);
@@ -911,10 +1042,13 @@ function saveLawUpdate_(req) {
   }
   upsert_(db.lawUpdates, u);
   writeDb_(db);
+  var notified = 0;
   if (req.notifyClients && u.status === 'Approved') {
     var s = settings_(db);
     Object.keys(clientsHit).forEach(function (cid) {
       var c = db.clients.filter(function (x) { return x.id === cid; })[0];
+      if (!c || !(c.aiPlan && c.aiPlan.enabled)) return; // automatic law alerts are part of the AI plan
+      notified++;
       var to = c ? validEmails_(c.reminderEmails).join(',') : '';
       if (!to) return;
       safeMail_({ to: to, cc: s.safeCc, replyTo: s.safeTo, name: s.senderName, subject: 'Change in law affecting your policies – ' + u.title,
@@ -924,5 +1058,214 @@ function saveLawUpdate_(req) {
           '<p>SAFE Legal Solutions is reviewing these policies and will share updated versions where needed. You can see the status in your client portal.</p><p>Regards,<br>SAFE Legal Solutions</p></div>' });
     });
   }
-  return { ok: true, flagged: flagged, clients: Object.keys(clientsHit).length };
+  return { ok: true, flagged: flagged, clients: Object.keys(clientsHit).length, notified: notified };
+}
+
+
+// ================================================================ AI BILLING
+// Every AI call is metered by client and feature. Price = Anthropic API cost (USD, from the price table)
+// converted at the set USD→INR rate, plus SAFE's margin, plus GST. Usage by clients not on the AI plan
+// is recorded as SAFE's own cost (not billable).
+
+var DEFAULT_AI_PRICES = {
+  'claude-sonnet-5-5': { in: 2, out: 10 },
+  'claude-haiku-5-5': { in: 0.10, out: 0.50, longAt: 100000, inLong: 0.50, outLong: 2.50 },
+  'claude-opus-5-5': { in: 4, out: 20 }
+};
+
+function priceUsd_(s, model, inTok, outTok) {
+  var table = s.aiPrices || DEFAULT_AI_PRICES;
+  var p = table[model] || table['claude-sonnet-5-5'] || DEFAULT_AI_PRICES['claude-sonnet-5-5'];
+  var long = p.longAt && inTok > p.longAt;
+  var pin = long ? (p.inLong || p.in) : p.in, pout = long ? (p.outLong || p.out) : p.out;
+  return (inTok * Number(pin) + outTok * Number(pout)) / 1e6;
+}
+
+function recordUsage_(meter, model, inTok, outTok) {
+  withLock_(function () {
+    var db = readDb_();
+    var s = settings_(db);
+    var usd = priceUsd_(s, model, inTok, outTok);
+    var month = Utilities.formatDate(new Date(), DEFAULTS.TZ, 'yyyy-MM');
+    var cid = meter.clientId || 'SAFE';
+    var client = db.clients.filter(function (x) { return x.id === cid; })[0];
+    var billable = !!(client && client.aiPlan && client.aiPlan.enabled);
+    db.aiUsage = db.aiUsage || {};
+    db.aiUsage[cid] = db.aiUsage[cid] || {};
+    var m = db.aiUsage[cid][month] = db.aiUsage[cid][month] || { calls: 0, inTok: 0, outTok: 0, usd: 0, billableUsd: 0, features: {} };
+    m.calls++; m.inTok += inTok; m.outTok += outTok; m.usd += usd; if (billable) m.billableUsd += usd;
+    var f = m.features[meter.feature || 'Other'] = m.features[meter.feature || 'Other'] || { calls: 0, usd: 0, billableUsd: 0 };
+    f.calls++; f.usd += usd; if (billable) f.billableUsd += usd;
+    writeDb_(db);
+  });
+}
+
+function inrBill_(s, usd) {
+  var api = usd * s.usdInr;
+  var margin = api * s.marginPct / 100;
+  var sub = api + margin;
+  return { apiInr: api, marginInr: margin, subtotal: sub, gst: sub * s.gstPct / 100, total: sub * (1 + s.gstPct / 100) };
+}
+
+/** Typical monthly cost ranges shown to clients before they switch the AI assistant on. */
+function aiPricingInfo_(s) {
+  var main = s.modelMain;
+  var u = function (inTok, outTok, n) { return priceUsd_(s, main, inTok, outTok) * n; };
+  var light = u(32000, 400, 20) + u(1500, 400, 10) + u(2500, 5000, 1);
+  var heavy = u(32000, 400, 150) + u(1500, 400, 60) + u(2500, 5000, 5);
+  var r = function (usd) { var v = inrBill_(s, usd).subtotal + s.aiMinFee; return Math.max(50, Math.ceil(v / 50) * 50); };
+  var per = function (inTok, outTok) { return Math.ceil(inrBill_(s, priceUsd_(s, main, inTok, outTok)).subtotal * 10) / 10; };
+  return {
+    marginPct: s.marginPct, gstPct: s.gstPct, usdInr: s.usdInr, minFee: s.aiMinFee, model: main,
+    estimateLow: r(light), estimateHigh: r(heavy),
+    perQuestion: per(32000, 400), perWording: per(1500, 400),
+    terms: aiTermsText_(s)
+  };
+}
+
+function aiTermsText_(s) {
+  return 'AI usage is billed monthly at actual cost: Anthropic\'s API charge (converted from US dollars at about ₹' + s.usdInr + ' per dollar) plus SAFE Legal\'s margin of ' + s.marginPct + '%' +
+    (s.aiMinFee ? ', subject to a minimum of ₹' + s.aiMinFee + ' per month' : '') + ', plus GST at ' + s.gstPct + '%. Usage stops when the AI assistant is switched off.';
+}
+
+function aiUsageView_(db, s, cid) {
+  var month = Utilities.formatDate(new Date(), DEFAULTS.TZ, 'yyyy-MM');
+  var m = (db.aiUsage && db.aiUsage[cid] && db.aiUsage[cid][month]) || { calls: 0, billableUsd: 0 };
+  var b = inrBill_(s, m.billableUsd || 0);
+  return { month: month, calls: m.calls || 0, amount: Math.round(b.subtotal * 100) / 100, gstPct: s.gstPct };
+}
+
+
+// ================================================================ SAFE API (for clients' own software)
+// Clients opt in (portal request → SAFE switches it on → client creates keys). Keys look like
+// safe_live_<40 hex>; only a SHA-256 hash and a short prefix are stored. Every call is metered.
+//
+// GET  <web app URL>?op=policies&key=...            list issued policies
+// GET  <web app URL>?op=policy&id=...&format=docx|text&key=...
+// GET  <web app URL>?op=alerts&key=...              renewals due and change-in-law alerts
+// GET  <web app URL>?op=catalog&key=...             documents available to request
+// POST {"action":"api","op":"request","key":"...", "items":[{"itemId":"hr-leave"}], "custom":[...], "note":"...", "requestedBy":{...}}
+// POST {"action":"api","op":"ask","key":"...","question":"..."}   (needs the AI plan; billed)
+
+function sha256Hex_(str) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, str, Utilities.Charset.UTF_8)
+    .map(function (b) { var v = (b < 0 ? b + 256 : b).toString(16); return v.length === 1 ? '0' + v : v; }).join('');
+}
+
+function publicApi_(c) {
+  var a = c.api || {};
+  return { enabled: !!a.enabled, since: a.since || '', requestedAt: a.requestedAt || '', keys: (a.keys || []).map(function (k) {
+    return { id: k.id, name: k.name, prefix: k.prefix, createdAt: k.createdAt, createdBy: k.createdBy, lastUsedAt: k.lastUsedAt || '', revokedAt: k.revokedAt || '' };
+  }) };
+}
+
+function makeApiKey_(c, name, by) {
+  var key = 'safe_live_' + randomToken_().slice(0, 40);
+  var rec = { id: 'key_' + randomToken_().slice(0, 10), name: name, prefix: key.slice(0, 16), hash: sha256Hex_(key), createdAt: new Date().toISOString(), createdBy: by };
+  c.api = c.api || {};
+  c.api.keys = (c.api.keys || []).concat([rec]);
+  return { id: rec.id, name: name, key: key, prefix: rec.prefix };
+}
+
+function revokeApiKey_(c, keyId, by) {
+  var k = ((c.api && c.api.keys) || []).filter(function (x) { return x.id === keyId; })[0];
+  if (!k) throw new Error('Key not found');
+  if (!k.revokedAt) { k.revokedAt = new Date().toISOString(); k.revokedBy = by; }
+}
+
+function apiAuth_(db, key) {
+  key = String(key || '');
+  if (!/^safe_live_[a-f0-9]{40}$/.test(key)) throw new Error('Missing or invalid API key.');
+  var h = sha256Hex_(key);
+  for (var i = 0; i < db.clients.length; i++) {
+    var c = db.clients[i];
+    var k = ((c.api && c.api.keys) || []).filter(function (x) { return x.hash === h; })[0];
+    if (k) {
+      if (k.revokedAt) throw new Error('This API key has been revoked.');
+      if (!(c.api && c.api.enabled)) throw new Error('API access is switched off for this company. Contact SAFE Legal.');
+      return { client: c, key: k };
+    }
+  }
+  throw new Error('Missing or invalid API key.');
+}
+
+function apiMeter_(clientId, keyId, op) {
+  withLock_(function () {
+    var db = readDb_();
+    var month = Utilities.formatDate(new Date(), DEFAULTS.TZ, 'yyyy-MM');
+    db.apiUsage = db.apiUsage || {};
+    db.apiUsage[clientId] = db.apiUsage[clientId] || {};
+    var m = db.apiUsage[clientId][month] = db.apiUsage[clientId][month] || { calls: 0, ops: {} };
+    m.calls++; m.ops[op] = (m.ops[op] || 0) + 1;
+    var c = db.clients.filter(function (x) { return x.id === clientId; })[0];
+    var k = c && ((c.api && c.api.keys) || []).filter(function (x) { return x.id === keyId; })[0];
+    if (k) k.lastUsedAt = new Date().toISOString();
+    writeDb_(db);
+  });
+}
+
+function apiHandle_(op, p) {
+  var db = readDb_();
+  var s = settings_(db);
+  var auth = apiAuth_(db, p.key || p.apiKey);
+  var c = auth.client;
+  // daily limit per client (counted in 6-hour windows of a quarter of the daily limit)
+  var cache = CacheService.getScriptCache();
+  var ck = 'api_' + c.id;
+  var n = Number(cache.get(ck) || 0);
+  if (n >= Math.ceil(s.apiDailyLimit / 4)) throw new Error('Rate limit reached. Please try again later.');
+  cache.put(ck, String(n + 1), 21600);
+  apiMeter_(c.id, auth.key.id, op);
+  var docs = db.docs.filter(function (d) { return d.clientId === c.id; });
+  var view = function (d) {
+    return { id: d.id, title: d.title, reference: d.ref, stage: stageOf_(d), version: d.issued ? d.issued.version : null,
+      effectiveDate: d.issued ? d.issued.effectiveDate || null : null, expiryDate: d.issued ? d.issued.expiryDate || null : null,
+      downloadable: !!(d.issued && d.issued.fileId) };
+  };
+  switch (op) {
+    case 'whoami':
+      return { ok: true, company: c.name, keyName: auth.key.name };
+    case 'policies':
+      return { ok: true, company: c.name, policies: docs.filter(function (d) { return d.status === 'Issued' || (d.issued && d.status !== 'Archived'); }).map(view) };
+    case 'policy': {
+      var d = docs.filter(function (x) { return x.id === p.id; })[0];
+      if (!d || !d.issued) return { ok: false, error: 'Policy not found or not issued.' };
+      var out = { ok: true, policy: view(d) };
+      if (p.format === 'docx' && d.issued.fileId) {
+        var f = DriveApp.getFileById(d.issued.fileId);
+        out.file = { name: f.getName(), mime: f.getBlob().getContentType(), base64: Utilities.base64Encode(f.getBlob().getBytes()) };
+      } else if (p.format === 'text' && d.issued.textFileId) {
+        out.text = DriveApp.getFileById(d.issued.textFileId).getBlob().getDataAsString('UTF-8');
+      }
+      return out;
+    }
+    case 'alerts': {
+      var today = Utilities.formatDate(new Date(), DEFAULTS.TZ, 'yyyy-MM-dd');
+      var renewals = docs.filter(function (d) { return d.status !== 'Archived' && d.issued && d.issued.expiryDate && daysBetween_(today, d.issued.expiryDate) <= s.daysBefore; })
+        .map(function (d) { return { id: d.id, title: d.title, reference: d.ref, expiryDate: d.issued.expiryDate, daysLeft: daysBetween_(today, d.issued.expiryDate) }; });
+      var lawAlerts = (c.aiPlan && c.aiPlan.enabled) ? docs.filter(function (d) { return (d.lawFlags || []).some(function (f) { return !f.resolved; }); })
+        .map(function (d) { var f = d.lawFlags.filter(function (x) { return !x.resolved; })[0]; return { id: d.id, title: d.title, change: f.title, summary: f.summary }; }) : [];
+      return { ok: true, renewalsDue: renewals, lawAlerts: lawAlerts, lawAlertsIncluded: !!(c.aiPlan && c.aiPlan.enabled) };
+    }
+    case 'catalog':
+      return { ok: true, documents: ((db.catalog && db.catalog.items) || []).filter(function (i) { return i.cat !== 'Custom'; }).map(function (i) { return { itemId: i.id, title: i.title, tag: i.tag, category: i.cat }; }) };
+    case 'request': {
+      var r = buildRequest_(c, p, 'API');
+      if (r.error) return { ok: false, error: r.error };
+      withLock_(function () { var db2 = readDb_(); db2.requests.push(r); writeDb_(db2); });
+      notifySafeOfRequest_(readDb_(), c, r);
+      return { ok: true, requestId: r.id, status: r.status };
+    }
+    case 'requests':
+      return { ok: true, requests: db.requests.filter(function (r) { return r.clientId === c.id && !r.clientHidden; }).map(function (r) { return { id: r.id, createdAt: r.createdAt, status: r.status, items: (r.items || []).map(function (i) { return i.title; }), noteFromSafe: r.safeNote || '' }; }) };
+    case 'ask': {
+      if (!(c.aiPlan && c.aiPlan.enabled)) return { ok: false, error: 'Questions need the AI assistant. Switch it on in the client portal.' };
+      if (!PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY')) return { ok: false, error: 'This feature is not available at the moment.' };
+      aiRateLimit_(c.id, 'ask', 40);
+      var a = portalAsk_(db, c, clip_(p.question, 1000), { clientId: c.id, feature: 'Questions (API)' });
+      return { ok: true, answer: a.text, answered: a.answered, sources: a.sources, disclaimer: 'Generated by AI from your issued policies; not legal advice.' };
+    }
+    default:
+      return { ok: false, error: 'Unknown operation. See the API guide.' };
+  }
 }

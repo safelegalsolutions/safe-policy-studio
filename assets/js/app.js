@@ -251,6 +251,8 @@
           ${lh ? '<button class="btn danger small" data-action="remove-letterhead">Remove letterhead</button>' : ''}
         </div>
       </div>
+      ${aiPlanCard(c)}
+      ${apiCard(c)}
       ${recoCard(c)}
       ${portalCard(c)}
       <div class="row" style="margin-top:16px;justify-content:space-between">
@@ -528,7 +530,7 @@
       const already = it && have.has(it.id) && !i.docId;
       const checked = i.included !== false && !already;
       return `<div class="lib-item"><input type="checkbox" data-reqitem="${idx}" ${checked ? 'checked' : ''} ${done ? 'disabled' : ''}>
-        <span>${i.kind === 'question' ? '<b>Question from client:</b> ' : i.type === 'custom' ? `<b>New ${esc(i.kind || 'policy')}:</b> ` : ''}${esc(i.title)}${i.details ? `<div class="muted small">${esc(i.details)}</div>` : ''}${already ? '<div class="small exp-warn">Already in this client\'s documents</div>' : ''}${i.kind === 'question' ? '<div class="small muted">Answer it in the note to the client, then mark the request completed.</div>' : ''}${i.type === 'custom' && i.kind !== 'question' && !done ? `<div class="row small" style="margin-top:4px">Create as <select class="input" style="width:auto;padding:2px 6px" data-reqkind="${idx}"><option value="custom-policy" ${i.kind !== 'agreement' ? 'selected' : ''}>custom policy</option><option value="custom-agreement" ${i.kind === 'agreement' ? 'selected' : ''}>custom agreement</option>${S.ITEMS.filter((x) => x.cat !== 'Custom').map((x) => `<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select></div>` : ''}</span>
+        <span>${i.kind === 'api' ? '<b>API access request:</b> ' : i.kind === 'question' ? '<b>Question from client:</b> ' : i.type === 'custom' ? `<b>New ${esc(i.kind || 'policy')}:</b> ` : ''}${esc(i.title)}${i.details ? `<div class="muted small">${esc(i.details)}</div>` : ''}${already ? '<div class="small exp-warn">Already in this client\'s documents</div>' : ''}${i.kind === 'question' ? '<div class="small muted">Answer it in the note to the client, then mark the request completed.</div>' : ''}${i.kind === 'api' ? `<div class="small muted">Switch on API access in the client's profile (API access card), then mark this request completed.</div>${c && !(c.api && c.api.enabled) ? `<button class="btn small" data-action="api-on-from-req" data-client="${c.id}">Switch on API access now</button>` : '<span class="status Issued">API access is on</span>'}` : ''}${i.type === 'custom' && i.kind !== 'question' && i.kind !== 'api' && !done ? `<div class="row small" style="margin-top:4px">Create as <select class="input" style="width:auto;padding:2px 6px" data-reqkind="${idx}"><option value="custom-policy" ${i.kind !== 'agreement' ? 'selected' : ''}>custom policy</option><option value="custom-agreement" ${i.kind === 'agreement' ? 'selected' : ''}>custom agreement</option>${S.ITEMS.filter((x) => x.cat !== 'Custom').map((x) => `<option value="${x.id}">${esc(x.title)}</option>`).join('')}</select></div>` : ''}</span>
         <span class="meta">${it ? `<span class="tag ${it.tag}">${it.tag}</span>${S.isRelevant(it, ind) ? '' : '<span class="badge skeleton">Not typical for industry</span>'}` : '<span class="badge added">Not in library</span>'}${doc ? `<button class="btn small" data-action="open-doc" data-id="${doc.id}" data-client="${doc.clientId}">${esc(doc.status)}</button>` : ''}</span></div>`;
     }).join('');
     const hist = (r.history || []).slice().reverse().map((h) => `<li>${S.fmtDate(h.at.slice(0, 10))} – ${esc(h.by)}: ${esc(h.action)}</li>`).join('');
@@ -578,7 +580,7 @@
       document.querySelectorAll('[data-reqitem]').forEach((cb) => { r.items[+cb.dataset.reqitem].included = cb.checked; });
       r.items.forEach((i, idx) => {
         if (i.included === false || i.docId) return;
-        if (i.kind === 'question') return;
+        if (i.kind === 'question' || i.kind === 'api') return;
         if (i.type === 'library') entries.push({ itemId: i.itemId, ref: i, requestId: r.id });
         else {
           const sel = document.querySelector(`[data-reqkind="${idx}"]`);
@@ -716,7 +718,7 @@
           <label class="field">Title (change only if the client uses a different name)<input class="input" data-wf="customTitle" value="${esc(w.customTitle)}" placeholder="${esc(it.title)}" ${locked ? 'disabled' : ''}></label>
           ${docFields.map((f) => fieldInput(f, w.meta[f.k], 'meta.')).join('')}
           <div class="group-title">${S.isDrafted(it.id) ? 'Prompts for this document' : 'Content'}</div>
-          ${!S.isDrafted(it.id) && !locked ? `<div class="ai-card"><b>✨ Draft with AI</b><div class="small">Writes the purpose and operative provisions for ${esc(c.name)} (${esc((industryOf(c) || {}).name || 'its industry')}), using any notes you type in the boxes below. The result lands here as a draft for advocate review.</div><button class="btn small primary" data-action="ai-draft" ${st.aiBusy ? 'disabled' : ''}>${st.aiBusy ? 'Drafting… (up to a minute)' : 'Draft with AI'}</button></div>` : ''}
+          ${!S.isDrafted(it.id) && !locked ? `<div class="ai-card"><b>✨ Draft with AI</b><div class="small">Writes the purpose and operative provisions for ${esc(c.name)} (${esc((industryOf(c) || {}).name || 'its industry')}), using any notes you type in the boxes below. The result lands here as a draft for advocate review.</div><div class="small">${c.aiPlan && c.aiPlan.enabled ? '💳 Billed to the client (AI plan).' : '⚠ Client is not on the AI plan – this use is at SAFE\'s cost.'}</div><button class="btn small primary" data-action="ai-draft" ${st.aiBusy ? 'disabled' : ''}>${st.aiBusy ? 'Drafting… (up to a minute)' : 'Draft with AI'}</button></div>` : ''}
           ${fields.length ? fields.map((f) => fieldInput(f.dfn ? Object.assign({}, f, { d: f.dfn(c) }) : f, w.values[f.k], 'val.', { ai: !locked })).join('') : '<p class="muted small">No extra prompts. Company details come from the profile.</p>'}
           <p class="small muted">Company details (name, address, offices, signatory, data protection contacts) come from the <button class="link-btn" data-action="edit-profile">company profile</button>.</p>
         </div>
@@ -1000,7 +1002,7 @@
     const ind = industryOf(c);
     st.aiBusy = true; renderMain();
     try {
-      const r = await st.store.ai('aiDraft', {
+      const r = await st.store.ai('aiDraft', { clientId: c.id,
         title: st.work.customTitle || it.title, kind: it.kind, section: it.sectionTitle,
         industry: ind ? ind.name : (c.industryOther || ''), legalForm: c.legalForm || '', states: c.states || '', headcount: c.headcount || '', regulators: c.regulators || '',
         purpose: st.work.values.customPurpose || '', notes: st.work.values.customBody || '',
@@ -1019,7 +1021,7 @@
     if (!text) throw new Error('Type your points in the box first, then click Legal wording.');
     const d = docById(st.docId); const c = st.db.clients.find((x) => x.id === d.clientId); const it = S.itemById(d.itemId);
     toast('Rewriting in legal language…');
-    const r = await st.store.ai('aiLegalise', { text, context: { title: st.work.customTitle || it.title, kind: it.kind, industry: (industryOf(c) || {}).name || '' } });
+    const r = await st.store.ai('aiLegalise', { clientId: c.id, text, context: { title: st.work.customTitle || it.title, kind: it.kind, industry: (industryOf(c) || {}).name || '' } });
     st.undo = { field: name, text };
     if (name.startsWith('val.')) st.work.values[name.slice(4)] = r.text; else if (name.startsWith('meta.')) st.work.meta[name.slice(5)] = r.text;
     renderMain();
@@ -1058,7 +1060,7 @@
     try {
       const catalog = S.ITEMS.filter((i) => i.cat !== 'Custom' && S.isRelevant(i, ind)).map((i) => ({ id: i.id, title: i.title, tag: i.tag }));
       const profile = { industry: ind ? ind.name : (c.industryOther || ''), industryGroup: ind ? ind.group : '', legalForm: c.legalForm, states: c.states, offices: String(c.offices || '').split('\n').filter(Boolean).length, headcount: c.headcount, womenEmployees: c.headcountWomen, regulators: c.regulators, regulatoryLicence: c.regNo ? 'yes' : 'no' };
-      const r = await st.store.ai('aiRecommend', { profile, catalog });
+      const r = await st.store.ai('aiRecommend', { clientId: c.id, profile, catalog });
       c.recommendations = { items: r.items, at: new Date().toISOString(), published: false };
       await st.store.saveClient(c);
       toast(r.items.length + ' suggestions – check them before publishing', 'ok');
@@ -1123,7 +1125,8 @@
           <div class="card"><h3>Clients affected now</h3>${Object.keys(byClient).length ? `<ul class="small">${Object.keys(byClient).map((cid) => `<li><b>${esc(clientName(cid))}</b>: ${byClient[cid].map((d) => esc(d.title)).join('; ')}</li>`).join('')}</ul>` : '<p class="small muted">No client has these documents yet.</p>'}</div>
           <div class="card"><h3>Decision</h3>
             ${done ? `<p class="small">${u.status === 'Approved' ? `Approved ${u.approvedAt ? S.fmtDate(u.approvedAt.slice(0, 10)) : ''}: ${u.flaggedDocs || 0} documents of ${u.flaggedClients || 0} clients flagged.` : 'Dismissed.'}</p>` : `
-            <label class="small"><input type="checkbox" id="lawNotify"> Email affected clients now</label>
+            <label class="small"><input type="checkbox" id="lawNotify"> Email affected clients on the AI plan now</label>
+            <p class="small muted">Clients on the AI plan also see a change-in-law notice in their portal. Others are not alerted automatically; SAFE reviews their documents as usual.</p>
             <div class="row" style="margin-top:10px"><button class="btn gold" data-action="law-approve">Approve and flag documents</button><button class="btn" data-action="law-dismiss">Dismiss</button></div>`}
             <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px"><button class="btn small danger" data-action="law-delete">Delete</button></div></div>
         </div></div>`;
@@ -1151,7 +1154,7 @@
     const notify = status === 'Approved' && $('#lawNotify') && $('#lawNotify').checked;
     const r = await st.store.saveLawUpdate(u, notify);
     st.db = await st.store.load();
-    toast(status === 'Approved' ? `Approved – ${r.flagged} documents of ${r.clients} clients flagged${notify ? ', clients emailed' : ''}` : 'Dismissed', 'ok');
+    toast(status === 'Approved' ? `Approved – ${r.flagged} documents of ${r.clients} clients flagged${notify ? `; ${r.notified} AI-plan client${r.notified === 1 ? '' : 's'} emailed` : ''}` : 'Dismissed', 'ok');
     renderAll();
   }
 
@@ -1161,6 +1164,101 @@
       <label class="field span2">Link (optional)<input class="input" id="laLink" placeholder="https://"></label>
       <label class="field span2">Text <span class="req">*</span><textarea class="input" id="laText" rows="10"></textarea></label></div>
       <div class="modal-actions"><button class="btn" data-action="close-modal">Cancel</button><button class="btn primary" data-action="law-analyse">Analyse with AI</button></div>`);
+  }
+
+  // ---------------------------------------------------------------- AI billing
+  const DEFAULT_AI_PRICES = { 'claude-sonnet-5-5': { in: 2, out: 10 }, 'claude-haiku-5-5': { in: 0.10, out: 0.50, longAt: 100000, inLong: 0.50, outLong: 2.50 }, 'claude-opus-5-5': { in: 4, out: 20 } };
+  function billSettings() {
+    const s = settings();
+    return { usdInr: Number(s.usdInr || 95), marginPct: s.marginPct === undefined || s.marginPct === '' ? 30 : Number(s.marginPct), gstPct: s.gstPct === undefined || s.gstPct === '' ? 18 : Number(s.gstPct), aiMinFee: Number(s.aiMinFee || 0), aiPrices: s.aiPrices || DEFAULT_AI_PRICES, modelMain: s.modelMain || 'claude-sonnet-5-5' };
+  }
+  function inrBill(b, usd) { const api = usd * b.usdInr; const margin = api * b.marginPct / 100; const sub = api + margin; return { api, margin, sub, gst: sub * b.gstPct / 100, total: sub * (1 + b.gstPct / 100) }; }
+  const rupees = (v) => '₹' + Number(v || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const monthNow = () => todayIso().slice(0, 7);
+  const monthName = (m) => { const [y, mo] = m.split('-'); return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][+mo - 1] + ' ' + y; };
+
+  function usageFor(cid, month) { return ((st.db.aiUsage || {})[cid] || {})[month] || null; }
+
+  function aiPlanCard(c) {
+    if (st.store.mode !== 'google') return '';
+    const p = c.aiPlan || {};
+    const b = billSettings();
+    const months = Object.keys((st.db.aiUsage || {})[c.id] || {}).sort().reverse();
+    const cur = usageFor(c.id, monthNow());
+    const bill = inrBill(b, cur ? cur.billableUsd : 0);
+    return `<div class="card"><div class="spread"><h3>AI plan and billing ${p.enabled ? '<span class="status Issued">AI plan ON</span>' : '<span class="status Archived">AI plan off</span>'}</h3>
+      <div class="row">${p.enabled ? '<button class="btn small danger" data-action="aiplan-off">Switch off for client</button>' : '<button class="btn small" data-action="aiplan-on">Switch on for client</button>'}</div></div>
+      <p class="small muted">${p.enabled ? `Switched on ${p.since ? S.fmtDate(p.since.slice(0, 10)) : ''} by ${esc(p.by || '')}. AI use for this client is billable.` : 'Clients choose the AI assistant themselves in their portal, or you can switch it on here on their written instruction. Without the AI plan, the client gets the standard service, and any AI SAFE uses for them is at SAFE\'s cost.'}</p>
+      <table class="table"><thead><tr><th>Month</th><th>AI uses</th><th>API cost</th><th>Billable to client (excl. GST)</th></tr></thead><tbody>
+      ${(months.length ? months : [monthNow()]).slice(0, 6).map((m) => { const u = usageFor(c.id, m) || { calls: 0, usd: 0, billableUsd: 0 }; const bb = inrBill(b, u.billableUsd); return `<tr><td>${monthName(m)}</td><td>${u.calls}</td><td>$${u.usd.toFixed(3)} (${rupees(u.usd * b.usdInr)})</td><td><b>${rupees(bb.sub)}</b></td></tr>`; }).join('')}
+      </tbody></table>
+      <div class="row" style="margin-top:8px"><button class="btn small" data-action="ai-statement" data-client="${c.id}">Download statement for ${monthName(monthNow())}</button><span class="small muted">This month so far: ${rupees(bill.sub)} + GST ${rupees(bill.gst)} = ${rupees(bill.total)}</span></div></div>`;
+  }
+
+  function apiGuideUrl() {
+    const base = location.href.split('#')[0].split('?')[0].replace(/[^/]*$/, '');
+    return `${base}api.html?d=${encodeURIComponent(st.store.deploymentId ? st.store.deploymentId() : '')}`;
+  }
+
+  function apiCard(c) {
+    if (st.store.mode !== 'google') return '';
+    const a = c.api || {}; const s = settings();
+    const keys = (a.keys || []);
+    const u = (((st.db.apiUsage || {})[c.id] || {})[monthNow()]) || { calls: 0 };
+    return `<div class="card"><div class="spread"><h3>API access ${a.enabled ? '<span class="status Issued">ON</span>' : a.requestedAt ? '<span class="status req-New">Requested</span>' : '<span class="status Archived">Off</span>'}</h3>
+      <div class="row">${a.enabled ? '<button class="btn small danger" data-action="api-off">Switch off</button>' : '<button class="btn small" data-action="api-on">Switch on API access</button>'}</div></div>
+      <p class="small muted">Lets ${esc(c.name)}'s own software (HR, payroll or intranet) fetch its issued policies, renewal and law alerts, and send requests to SAFE automatically. ${a.requestedAt && !a.enabled ? `Requested by the client on ${S.fmtDate(a.requestedAt.slice(0, 10))}.` : ''} ${s.apiMonthlyFee ? `Fee: ₹${Number(s.apiMonthlyFee).toLocaleString('en-IN')} per month plus GST.` : 'No API fee is set (Settings → AI and law watch).'}</p>
+      ${a.enabled ? `<p class="small">Calls this month: <b>${u.calls}</b> · <a href="${esc(apiGuideUrl())}" target="_blank" rel="noopener">API guide</a></p>
+      <table class="table"><thead><tr><th>Key</th><th>Created</th><th>Last used</th><th></th></tr></thead><tbody>
+      ${keys.map((k) => `<tr><td><b>${esc(k.name)}</b><div class="small muted">${esc(k.prefix)}…</div></td><td class="small">${S.fmtDate((k.createdAt || '').slice(0, 10))}<div class="muted">${esc(k.createdBy || '')}</div></td><td class="small">${k.lastUsedAt ? S.fmtDate(k.lastUsedAt.slice(0, 10)) : '—'}</td><td>${k.revokedAt ? '<span class="status Archived">Revoked</span>' : `<button class="btn small danger" data-action="api-revoke" data-key="${esc(k.id)}">Revoke</button>`}</td></tr>`).join('') || '<tr><td colspan="4" class="muted small">No keys yet. The client creates keys in its portal (or create one here).</td></tr>'}
+      </tbody></table>
+      <button class="btn small" data-action="api-newkey">Create a key for the client</button>` : ''}
+    </div>`;
+  }
+
+  async function apiSet(enabled) {
+    const c = client();
+    if (!enabled && !confirm('Switch off API access? All of this client\'s keys stop working immediately.')) return;
+    const notify = enabled ? confirm('Email the client that API access is ready?') : false;
+    const r = await st.store.ai('setApiAccess', { clientId: c.id, enabled, notify });
+    c.api = r.api; toast(enabled ? 'API access switched on' : 'API access switched off', 'ok'); renderAll();
+  }
+
+  function statementCsv(cid, month) {
+    const b = billSettings();
+    const u = usageFor(cid, month) || { calls: 0, inTok: 0, outTok: 0, usd: 0, billableUsd: 0, features: {} };
+    const c = st.db.clients.find((x) => x.id === cid) || { name: cid };
+    const rows = [['SAFE Legal Solutions – AI usage statement'], ['Client', c.name], ['Month', monthName(month)], ['Rate', `Anthropic API cost at ₹${b.usdInr} per USD + ${b.marginPct}% SAFE margin + ${b.gstPct}% GST`], [],
+      ['Feature', 'Uses', 'API cost (USD)', 'API cost (INR)', 'SAFE margin (INR)', 'Amount (INR, excl. GST)', 'Billable']];
+    Object.keys(u.features || {}).forEach((f) => { const x = u.features[f]; const bb = inrBill(b, x.billableUsd); rows.push([f, x.calls, x.usd.toFixed(4), (x.usd * b.usdInr).toFixed(2), bb.margin.toFixed(2), bb.sub.toFixed(2), x.billableUsd > 0 ? 'Yes' : 'No (SAFE cost)']); });
+    const t = inrBill(b, u.billableUsd);
+    let sub = t.sub; if (b.aiMinFee && u.billableUsd > 0 && sub < b.aiMinFee) sub = b.aiMinFee;
+    const au = (((st.db.apiUsage || {})[cid] || {})[month]) || null;
+    const apiOn = c.api && c.api.enabled;
+    if (apiOn || au) {
+      const fee = apiOn ? Number(settings().apiMonthlyFee || 0) : 0;
+      rows.push(['API access' + (au ? ` (${au.calls} calls)` : ''), '', '', '', '', fee.toFixed(2), fee ? 'Yes' : 'No fee set']);
+      sub += fee;
+    }
+    rows.push([], ['Billable subtotal', '', '', '', '', sub.toFixed(2)], [`GST @ ${b.gstPct}%`, '', '', '', '', (sub * b.gstPct / 100).toFixed(2)], ['Total payable', '', '', '', '', (sub * (1 + b.gstPct / 100)).toFixed(2)], [], ['Tokens read / written', u.inTok, u.outTok]);
+    return rows.map((r) => r.map((v) => `"${String(v === undefined ? '' : v).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  }
+
+  function usageReport() {
+    const b = billSettings();
+    const months = [...new Set(Object.values(st.db.aiUsage || {}).flatMap((x) => Object.keys(x)))].sort().reverse();
+    const m = st.reportMonth || months[0] || monthNow();
+    const rows = Object.keys(st.db.aiUsage || {}).map((cid) => ({ cid, u: usageFor(cid, m) })).filter((x) => x.u);
+    let tApi = 0, tBill = 0;
+    openModal('AI usage and billing', `
+      <label class="field" style="max-width:240px">Month<select class="input" data-action-change="report-month" id="repMonth">${(months.length ? months : [m]).map((x) => `<option value="${x}" ${x === m ? 'selected' : ''}>${monthName(x)}</option>`).join('')}</select></label>
+      <div class="table-wrap" style="margin-top:10px"><table class="table"><thead><tr><th>Client</th><th>AI plan</th><th>AI uses</th><th>API calls</th><th>AI cost</th><th>AI bill (excl. GST)</th><th></th></tr></thead><tbody>
+      ${rows.map(({ cid, u }) => { const c = st.db.clients.find((x) => x.id === cid); const bb = inrBill(b, u.billableUsd); tApi += u.usd * b.usdInr; tBill += bb.sub;
+        return `<tr><td>${esc(cid === 'SAFE' ? 'SAFE (law watch – firm cost)' : c ? c.name : '(deleted client)')}</td><td>${cid === 'SAFE' ? '—' : c && c.aiPlan && c.aiPlan.enabled ? 'On' : 'Off'}</td><td>${u.calls}</td><td>${((((st.db.apiUsage || {})[cid] || {})[m]) || { calls: 0 }).calls}</td><td>${rupees(u.usd * b.usdInr)}</td><td><b>${rupees(bb.sub)}</b></td><td>${cid !== 'SAFE' ? `<button class="btn small" data-action="ai-statement" data-client="${cid}" data-month="${m}">Statement</button>` : ''}</td></tr>`; }).join('') || '<tr><td colspan="7" class="muted">No AI use this month.</td></tr>'}
+      </tbody></table></div>
+      <p class="small"><b>Total API cost to SAFE:</b> ${rupees(tApi)} · <b>Total billable (excl. GST):</b> ${rupees(tBill)} · <b>SAFE margin earned:</b> ${rupees(tBill - rows.reduce((a, { u }) => a + u.billableUsd * b.usdInr, 0))}</p>
+      <p class="small muted">Amounts use the prices and exchange rate in AI settings. Check the Anthropic console (Usage) for the exact charge.</p>
+      <div class="modal-actions"><button class="btn" data-action="close-modal">Close</button></div>`);
   }
 
   // ---------------------------------------------------------------- AI settings
@@ -1178,6 +1276,27 @@
       <h3 style="margin-top:16px">Models</h3>
       <div class="grid2"><label class="field">Drafting and answers<input class="input" id="aiModelMain" value="${esc(s.modelMain || a.modelMain || 'claude-sonnet-5-5')}"></label>
       <label class="field">Law-watch screening (faster, cheaper)<input class="input" id="aiModelFast" value="${esc(s.modelFast || a.modelFast || 'claude-haiku-5-5')}"></label></div>
+      <h3 style="margin-top:16px">Client AI plan and pricing</h3>
+      <label class="small"><input type="checkbox" id="aiClients" ${s.aiForClients !== false ? 'checked' : ''}> Offer the AI assistant to clients in their portal (billable, client opts in)</label>
+      <div class="grid3" style="margin-top:8px">
+        <label class="field">USD → INR rate<input class="input" id="aiRate" type="number" step="0.01" value="${esc(s.usdInr || 95)}"></label>
+        <label class="field">SAFE margin (%)<input class="input" id="aiMargin" type="number" step="1" value="${esc(s.marginPct === undefined ? 30 : s.marginPct)}"></label>
+        <label class="field">GST (%)<input class="input" id="aiGst" type="number" step="1" value="${esc(s.gstPct === undefined ? 18 : s.gstPct)}"></label>
+        <label class="field">Minimum monthly fee (₹, 0 = none)<input class="input" id="aiMin" type="number" step="1" value="${esc(s.aiMinFee || 0)}"></label>
+      </div>
+      <p class="small muted" style="margin:8px 0 4px">Anthropic prices in USD per million tokens (check console.anthropic.com → pricing and update if they change):</p>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Model</th><th>Input</th><th>Output</th></tr></thead><tbody>
+        ${Object.keys(DEFAULT_AI_PRICES).map((m) => { const pr = (s.aiPrices || DEFAULT_AI_PRICES)[m] || DEFAULT_AI_PRICES[m]; return `<tr><td>${m}${pr.longAt ? ' <span class="muted small">(prompts up to 100K tokens)</span>' : ''}</td><td><input class="input" style="width:90px" type="number" step="0.01" data-price="${m}|in" value="${pr.in}"></td><td><input class="input" style="width:90px" type="number" step="0.01" data-price="${m}|out" value="${pr.out}"></td></tr>`; }).join('')}
+      </tbody></table></div>
+      <div id="aiEstimate" class="notice info small" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:6px"><button class="btn small" data-action="ai-report">AI usage and billing report</button></div>
+      <h3 style="margin-top:16px">SAFE API for clients' software</h3>
+      <label class="small"><input type="checkbox" id="apiClients" ${s.apiForClients !== false ? 'checked' : ''}> Offer API access in the client portal (clients request it; SAFE switches it on)</label>
+      <div class="grid3" style="margin-top:8px">
+        <label class="field">API access fee (₹ per month, 0 = free)<input class="input" id="apiFee" type="number" step="1" value="${esc(s.apiMonthlyFee || 0)}"></label>
+        <label class="field">Calls allowed per client per day<input class="input" id="apiLimit" type="number" step="100" value="${esc(s.apiDailyLimit || 1000)}"></label>
+        <div class="field">API guide<a class="btn small" href="${esc(apiGuideUrl())}" target="_blank" rel="noopener" style="text-align:center">Open API guide</a></div>
+      </div>
       <h3 style="margin-top:16px">Client portal</h3>
       <label class="small"><input type="checkbox" id="aiAsk" ${s.portalAsk !== false ? 'checked' : ''}> Clients can ask questions about their issued policies</label><br>
       <label class="small"><input type="checkbox" id="aiWording" ${s.portalWording !== false ? 'checked' : ''}> Clients can use "Improve wording" when describing a request</label>
@@ -1187,15 +1306,43 @@
       ${a.lastLawWatch ? `<p class="small muted">Last run: ${esc(a.lastLawWatch.replace('T', ' ').slice(0, 16))} UTC</p>` : ''}
       <div id="aiResult" class="small" style="margin-top:8px"></div>
       <div class="modal-actions"><button class="btn small" data-action="ai-prepare-qa">Prepare issued documents for client questions</button><button class="btn" data-action="close-modal">Close</button><button class="btn primary" data-action="ai-save-settings">Save AI settings</button></div>`;
+    refreshEstimate();
+  }
+
+  function readPrices() {
+    const p = JSON.parse(JSON.stringify(settings().aiPrices || DEFAULT_AI_PRICES));
+    document.querySelectorAll('[data-price]').forEach((el) => { const [m, k] = el.dataset.price.split('|'); p[m] = p[m] || {}; p[m][k] = Number(el.value || 0); });
+    return p;
+  }
+  function refreshEstimate() {
+    const box = $('#aiEstimate'); if (!box) return;
+    const b = { usdInr: Number($('#aiRate').value || 95), marginPct: Number($('#aiMargin').value || 0), gstPct: Number($('#aiGst').value || 0), aiMinFee: Number($('#aiMin').value || 0) };
+    const pr = readPrices()[$('#aiModelMain').value.trim()] || readPrices()['claude-sonnet-5-5'];
+    const usd = (i, o, n) => ((i * pr.in + o * pr.out) / 1e6) * n;
+    const est = (x) => Math.max(50, Math.ceil((inrBill(b, x).sub + b.aiMinFee) / 50) * 50);
+    const light = usd(32000, 400, 20) + usd(1500, 400, 10) + usd(2500, 5000, 1);
+    const heavy = usd(32000, 400, 150) + usd(1500, 400, 60) + usd(2500, 5000, 5);
+    box.innerHTML = `<b>What clients will see:</b> typical AI cost ₹${est(light).toLocaleString('en-IN')} – ₹${est(heavy).toLocaleString('en-IN')} per month plus GST. About ${rupees(inrBill(b, usd(32000, 400, 1)).sub)} per question and ${rupees(inrBill(b, usd(1500, 400, 1)).sub)} per wording improvement, before GST.`;
   }
 
   async function saveAiSettings() {
     const s = Object.assign({}, st.db.settings || {}, {
       modelMain: $('#aiModelMain').value.trim() || 'claude-sonnet-5-5', modelFast: $('#aiModelFast').value.trim() || 'claude-haiku-5-5',
       portalAsk: $('#aiAsk').checked, portalWording: $('#aiWording').checked, lawWatch: $('#aiLaw').checked, lawSources: $('#aiSources').value.trim(),
+      aiForClients: $('#aiClients').checked, usdInr: Number($('#aiRate').value || 95), marginPct: Number($('#aiMargin').value || 0), gstPct: Number($('#aiGst').value || 0), aiMinFee: Number($('#aiMin').value || 0),
+      aiPrices: readPrices(),
+      apiForClients: $('#apiClients').checked, apiMonthlyFee: Number($('#apiFee').value || 0), apiDailyLimit: Number($('#apiLimit').value || 1000),
     });
     await st.store.saveSettings(s);
     closeModal(); toast('AI settings saved', 'ok');
+  }
+
+  async function setAiPlanFor(enabled) {
+    if (enabled && !confirm('Switch on the AI plan for this client? Do this only on the client\'s written instruction; AI use will then be billable to them.')) return;
+    if (!enabled && !confirm('Switch off the AI plan for this client? Their AI features stop and no further AI use is billed to them.')) return;
+    const r = await st.store.ai('setAiPlan', { clientId: st.clientId, enabled });
+    const c = st.db.clients.find((x) => x.id === st.clientId); if (c) c.aiPlan = r.aiPlan;
+    toast(enabled ? 'AI plan switched on' : 'AI plan switched off', 'ok'); renderAll();
   }
 
   async function prepareQa() {
@@ -1377,6 +1524,25 @@
       'ai-remove-key': () => run(async () => { if (!confirm('Remove the Claude API key? AI features stop until a key is added again.')) return; await st.store.ai('setAiKey', { remove: true }); await showAiSettings(); }),
       'ai-save-settings': () => run(saveAiSettings),
       'ai-prepare-qa': () => run(prepareQa),
+      'aiplan-on': () => run(() => setAiPlanFor(true)),
+      'api-on': () => run(() => apiSet(true)),
+      'api-off': () => run(() => apiSet(false)),
+      'api-on-from-req': () => run(async () => { const r = await st.store.ai('setApiAccess', { clientId: el.dataset.client, enabled: true, notify: true }); const c = st.db.clients.find((x) => x.id === el.dataset.client); if (c) c.api = r.api; toast('API access switched on – client emailed', 'ok'); renderAll(); }),
+      'api-revoke': () => run(async () => { if (!confirm('Revoke this key? Software using it stops working immediately.')) return; const r = await st.store.ai('revokeApiKey', { clientId: st.clientId, keyId: el.dataset.key }); client().api = r.api; toast('Key revoked', 'ok'); renderAll(); }),
+      'api-newkey': () => run(async () => {
+        const name = prompt('Name for this key (for example "Ethika HRMS")'); if (!name) return;
+        const r = await st.store.ai('createApiKey', { clientId: st.clientId, name }); client().api = r.api; renderAll();
+        openModal('New API key', `<p><b>Copy this key now and send it to the client securely.</b> It is shown only once.</p><input class="input" readonly value="${esc(r.key.key)}" id="newKeyField" style="font-family:monospace"><div class="modal-actions"><button class="btn" data-action="copy-newkey">Copy</button><button class="btn primary" data-action="close-modal">Done</button></div>`);
+      }),
+      'copy-newkey': () => { const f = $('#newKeyField'); navigator.clipboard.writeText(f.value).then(() => toast('Key copied', 'ok'), () => f.select()); },
+      'aiplan-off': () => run(() => setAiPlanFor(false)),
+      'ai-report': () => run(async () => { st.db = await st.store.load(); usageReport(); }),
+      'ai-statement': () => run(async () => {
+        st.db = await st.store.load();
+        const cid = el.dataset.client; const m = el.dataset.month || monthNow();
+        const c = st.db.clients.find((x) => x.id === cid) || { name: cid, short: 'client' };
+        saveBlob(new Blob(['\ufeff' + statementCsv(cid, m)], { type: 'text/csv' }), fileSafe(`AI usage ${c.short || c.name} ${m}.csv`));
+      }),
       'req-delete': () => run(async () => {
         if (!confirm('Delete this request? It will disappear from the SAFE Inbox and from the client portal. Documents already created from it are kept.')) return;
         await st.store.deleteRequest(st.reqId); st.reqId = null; toast('Request deleted', 'ok'); renderAll();
@@ -1451,6 +1617,7 @@
     const t = e.target;
     if (t.id === 'clientSearch') { renderSidebar(); return; }
     if (t.dataset.lib === 'q') { st.lib.q = t.value; const pos = t.selectionStart; renderMain(); const n = document.querySelector('[data-lib="q"]'); n.focus(); n.setSelectionRange(pos, pos); return; }
+    if (t.closest && t.closest('#modalBody') && (t.id === 'aiRate' || t.id === 'aiMargin' || t.id === 'aiGst' || t.id === 'aiMin' || t.dataset.price || t.id === 'aiModelMain')) { refreshEstimate(); return; }
     if (t.hasAttribute('data-lawq')) {
       const u = lawFormState(); const box = $('#lawItems');
       if (box) box.innerHTML = lawItemsHtml(new Set(u.affectedItemIds), t.value, false);
@@ -1467,6 +1634,7 @@
 
   document.addEventListener('change', (e) => {
     const t = e.target;
+    if (t.id === 'repMonth') { st.reportMonth = t.value; usageReport(); return; }
     if (t.dataset.upload) { run(() => handleUpload(t)); return; }
     if (t.hasAttribute('data-import')) {
       run(async () => {

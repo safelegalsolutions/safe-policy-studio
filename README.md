@@ -50,6 +50,29 @@ AI suggests; an advocate approves. Nothing AI-generated reaches a client without
   - **Change-in-law notices:** shown on affected documents.
   - Limits: 40 questions and 40 rewrites per client every 6 hours. Both can be switched off in Settings → AI.
 
+### Client AI plan and billing
+
+- **Clients choose.** The client-facing AI features (questions, Improve wording, change-in-law alerts) are an optional **AI assistant** in the portal. The client switches it on by giving a name and ticking acceptance of the charges, and can switch it off at any time. Without it, they get the full standard service. SAFE can also switch it on or off from the client profile, on the client's written instruction. SAFE is emailed whenever a client switches it on or off.
+- **Pricing shown to clients:** Anthropic's API charge (converted at the USD→INR rate) **plus SAFE's margin**, plus GST. The portal shows a typical monthly range, a cost per question and per wording improvement, and the client's usage so far this month.
+- **Metering:** every AI call is recorded by client and feature (tokens, API cost). Use by clients on the plan is billable. Use for clients not on the plan, such as SAFE drafting with AI for them, is recorded as SAFE's own cost. The law watch is recorded as firm overhead.
+- **Billing:** Settings → AI and law watch:
+  - the USD→INR rate, margin %, GST % and optional minimum monthly fee;
+  - Anthropic's prices per million tokens (defaults: Sonnet 5.5 $2 in / $10 out; Haiku 5.5 $0.10 / $0.50 up to 100K-token prompts; confirm them against your Anthropic console);
+  - a live preview of what clients will see.
+
+  **AI usage and billing report** lists every client for a month, and **Statement** downloads a CSV for invoicing. Each client profile also has an **AI plan and billing** card with monthly totals.
+
+### SAFE API for clients' own software (optional)
+
+- **What it does:** lets a client's HR, payroll or intranet software read its issued policies (with the Word file or text), receive renewal and change-in-law alerts, send requests and, with the AI assistant, ask questions. The guide for their IT team is `api.html`, linked from the portal and from Settings.
+- **Opt-in flow:** the client clicks **🔌 API access → Request API access** in the portal, and the request lands in the SAFE Inbox. SAFE clicks **Switch on API access**, either in the request or in the client profile, and the client is emailed. The client then creates its own keys in the portal; each key (`safe_live_…`) is shown once. SAFE can also create or revoke keys from the client profile.
+- **Security:**
+  - Only a SHA-256 hash of each key is stored.
+  - A key can see only its own company's data.
+  - Revoked keys and switched-off companies are refused at once.
+  - There is a daily call limit per company.
+- **Charges:** set the **API access fee** (₹ per month) and the daily limit in Settings → AI and law watch. Calls are metered per company. The monthly statement adds an "API access" line with the fee and the number of calls. Questions asked through the API are billed under the AI plan.
+
 ### Set up the Claude API key
 
 1. Go to <https://console.anthropic.com> and sign in. You can use SAFE's existing account.
@@ -77,6 +100,7 @@ The AI needs permission to call an external service:
 ```
 index.html                     the SAFE studio (static; runs on GitHub Pages)
 portal.html                    the client portal
+api.html                       API guide for clients' IT teams
 assets/js/portal.js            client portal logic
 assets/app.css                 styles
 assets/js/industries.js        industry list, tags and regulators
