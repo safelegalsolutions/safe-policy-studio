@@ -18,10 +18,30 @@ An internal web app for **SAFE Legal Solutions** to generate policies, policy pl
 - **Version control:** Draft → Under review → Advocate reviewed → Issued (v1.0). Revisions become v1.1 (minor) or v2.0 (substantive). The issued version stays in force until the new one is issued. Every issued version is kept with its date, approval, reviewer and Word file. Any edit after review sends the document back to Draft.
 - **Renewal reminders:** each issued document has an expiry or review date. From **60 days before expiry**, a reminder email goes out **every week** to the client's reminder email(s) and **info@safelegal.org**, with a copy to **operations@safelegal.org**, until the document is renewed or archived. Reminders for one client are combined into one email. The app also shows a pop-up of renewals due when it opens.
 
+## Client portal and SAFE Inbox
+
+Each client can have its own portal (`portal.html`), which needs the Google backend.
+
+- **Enable it:** open the client, then **Company profile → Client portal → Enable client portal**. The studio shows a private link and a 6-digit PIN, with a ready-made message to send. The PIN is shown only once and is stored only as a hash; use **Reset PIN** if it is lost, **New link + PIN** to invalidate an old link, or **Disable portal** to stop access.
+- **What the client can do:** sign in with the PIN, then:
+  - tick policies and agreements from the library (filtered to its industry, with M/I/R explained);
+  - request a document that isn't listed, describing what it should cover;
+  - submit, with name, email, priority and needed-by date;
+  - follow each request under **My requests**;
+  - download issued Word files and see review / expiry dates under **My documents**.
+  Drafts are never shared.
+- **What SAFE sees:** each request lands in the **Inbox** (top bar, with a count of new requests), and an email goes to info@safelegal.org with a copy to operations@safelegal.org. The client gets an acknowledgement. Open the request, untick anything you won't take up, add a note, then:
+  - **Approve and add as drafts:** library items become drafts, and new requests become custom documents (or map them to a library item);
+  - **Decline**, or **Mark in review**.
+  The client is emailed about each update and sees your note in the portal.
+- **Security:** the portal only returns that client's own data. The PIN is hashed with a salt. Five wrong PINs lock sign-in for 15 minutes. Sessions expire after 6 hours. Downloads are only possible for that client's issued documents. Studio functions still need the API key.
+
 ## Files
 
 ```
-index.html                     the app (static; runs on GitHub Pages)
+index.html                     the SAFE studio (static; runs on GitHub Pages)
+portal.html                    the client portal
+assets/js/portal.js            client portal logic
 assets/app.css                 styles
 assets/js/industries.js        industry list, tags and regulators
 assets/js/catalog.js           the document library (sections, items, M/I/R tags)
