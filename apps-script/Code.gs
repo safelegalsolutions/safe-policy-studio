@@ -265,7 +265,7 @@ function portalView_(db, c) {
         canDownload: !!(d.issued && d.issued.fileId)
       };
     }),
-    requests: db.requests.filter(function (r) { return r.clientId === c.id; }).map(function (r) {
+    requests: db.requests.filter(function (r) { return r.clientId === c.id && !r.clientHidden; }).map(function (r) {
       return {
         id: r.id, createdAt: r.createdAt, status: r.status, note: r.note, urgency: r.urgency, neededBy: r.neededBy,
         safeNote: r.safeNote || '', requestedBy: r.requestedBy || {},
@@ -325,6 +325,22 @@ function handlePortal_(req) {
         notifySafeOfRequest_(db, pc, r);
         return { ok: true, id: r.id, data: portalView_(db, pc) };
       }
+      case 'portalWithdraw': {
+        var wc = portalClient_(db, req.session);
+        var wr = db.requests.filter(function (x) { return x.id === req.requestId && x.clientId === wc.id && !x.clientHidden; })[0];
+        if (!wr) return { ok: false, error: 'This request was not found.' };
+        var reason = clip_(req.reason, 2000).trim();
+        if (!reason) return { ok: false, error: 'Please tell us why you are deleting this request.' };
+        var by = req.withdrawnBy || {};
+        wr.previousStatus = wr.status;
+        wr.status = 'Withdrawn';
+        wr.clientHidden = true;
+        wr.withdrawal = { at: new Date().toISOString(), reason: reason, name: clip_(by.name, 120), email: clip_(by.email, 160) };
+        wr.history = (wr.history || []).concat([{ at: wr.withdrawal.at, by: 'Client', action: 'Deleted by client: ' + reason }]);
+        writeDb_(db);
+        notifySafeOfWithdrawal_(db, wc, wr);
+        return { ok: true, data: portalView_(db, wc) };
+      }
       case 'portalDownload': {
         var dc = portalClient_(db, req.session);
         var d = db.docs.filter(function (x) { return x.id === req.docId && x.clientId === dc.id; })[0];
@@ -365,6 +381,25 @@ function notifySafeOfRequest_(db, c, r) {
   if (ackTo) {
     MailApp.sendEmail({ to: ackTo, replyTo: s.safeTo, subject: 'We have received your request – SAFE Legal Solutions', name: s.senderName,
       htmlBody: '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222"><p>Dear ' + esc_(r.requestedBy.name || 'Sir / Madam') + ',</p><p>Thank you. SAFE Legal Solutions has received your request (reference ' + esc_(r.id) + ') for:</p>' + requestItemsHtml_(r) + '<p>We will review it and get back to you. You can follow its progress in your client portal.</p><p>Regards,<br>SAFE Legal Solutions<br>info@safelegal.org | +91 98861 81839 | safelegal.in</p></div>' });
+  }
+}
+
+function notifySafeOfWithdrawal_(db, c, r) {
+  var s = settings_(db);
+  var w = r.withdrawal || {};
+  var html = '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222">' +
+    '<p><b>' + esc_(c.name) + '</b> has deleted its request <b>' + esc_(r.id) + '</b> in the client portal.</p>' +
+    '<p><b>Status before deletion:</b> ' + esc_(r.previousStatus || '') + '</p>' +
+    '<p><b>Reason given:</b> ' + esc_(w.reason) + '</p>' +
+    (w.name || w.email ? '<p><b>Deleted by:</b> ' + esc_(w.name) + ' ' + esc_(w.email) + '</p>' : '') +
+    '<p>The request covered:</p>' + requestItemsHtml_(r) +
+    (r.previousStatus === 'Approved' || r.previousStatus === 'Completed' ? '<p><b>Note:</b> documents were already created from this request. Review them in the studio and delete or archive any that are no longer needed.</p>' : '') +
+    '<p>The request is kept in the SAFE Inbox under "Withdrawn"' + (s.appUrl ? ': <a href="' + esc_(s.appUrl) + '">open Policy Studio</a>' : '') + '.</p></div>';
+  MailApp.sendEmail({ to: s.safeTo, cc: s.safeCc, replyTo: w.email || s.safeTo, subject: 'Request deleted by client – ' + c.name + ' (' + r.id + ')', htmlBody: html, name: s.senderName });
+  var ackTo = w.email || (r.requestedBy && r.requestedBy.email);
+  if (ackTo) {
+    MailApp.sendEmail({ to: ackTo, replyTo: s.safeTo, name: s.senderName, subject: 'Your request has been deleted – SAFE Legal Solutions',
+      htmlBody: '<div style="font-family:Arial,sans-serif;font-size:14px;color:#222"><p>Dear ' + esc_(w.name || (r.requestedBy && r.requestedBy.name) || 'Sir / Madam') + ',</p><p>Your request ' + esc_(r.id) + ' has been deleted as you asked, and SAFE Legal Solutions has been informed. Your reason: "' + esc_(w.reason) + '".</p><p>If this was a mistake, please submit a new request in your client portal or write to us at ' + esc_(s.safeTo) + '.</p><p>Regards,<br>SAFE Legal Solutions</p></div>' });
   }
 }
 

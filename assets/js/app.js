@@ -468,7 +468,7 @@
   }
 
   // ---------------------------------------------------------------- SAFE Inbox
-  const REQ_STATUSES = ['New', 'In review', 'Approved', 'Declined', 'Completed'];
+  const REQ_STATUSES = ['New', 'In review', 'Approved', 'Declined', 'Completed', 'Withdrawn'];
   const reqById = (id) => (st.db.requests || []).find((r) => r.id === id) || null;
   const clientName = (id) => (st.db.clients.find((c) => c.id === id) || {}).name || '(deleted client)';
 
@@ -497,7 +497,7 @@
     const c = st.db.clients.find((x) => x.id === r.clientId);
     const ind = industryOf(c);
     const have = new Set(clientDocs(r.clientId).map((d) => d.itemId));
-    const done = r.status === 'Approved' || r.status === 'Completed' || r.status === 'Declined';
+    const done = r.status === 'Approved' || r.status === 'Completed' || r.status === 'Declined' || r.status === 'Withdrawn';
     const rows = r.items.map((i, idx) => {
       const it = i.type === 'library' ? S.itemById(i.itemId) : null;
       const doc = i.docId ? docById(i.docId) : null;
@@ -512,6 +512,7 @@
         <div class="eyebrow">Request ${esc(r.id)}</div><h1>${esc(c ? c.name : '(deleted client)')}</h1>
         <div class="muted small">Received ${S.fmtDate(r.createdAt.slice(0, 10))} · <span class="status req-${esc(r.status.replace(/\s/g, ''))}">${esc(r.status)}</span>${r.urgency === 'Urgent' ? ' · <b>Urgent</b>' : ''}${r.neededBy ? ' · needed by ' + S.fmtDate(r.neededBy) : ''}</div></div>
         ${c ? `<button class="btn" data-action="open-client" data-id="${c.id}">Open client</button>` : ''}</div>
+      ${r.status === 'Withdrawn' && r.withdrawal ? `<div class="notice bad" style="margin-bottom:14px"><b>Deleted by the client</b> on ${S.fmtDate(r.withdrawal.at.slice(0, 10))}${r.withdrawal.name ? ' by ' + esc(r.withdrawal.name) : ''} (status before: ${esc(r.previousStatus || '—')}).<br><b>Reason:</b> ${esc(r.withdrawal.reason)}${r.items.some((i) => i.docId && docById(i.docId)) ? '<br>Documents were already created from this request. Review them and delete or archive any that are no longer needed.' : ''}</div>` : ''}
       <div class="editor" style="grid-template-columns:1fr minmax(280px,360px)">
         <div class="card"><h3>Requested documents (${r.items.length})</h3>
           <p class="muted small">${done ? 'This request has been ' + esc(r.status.toLowerCase()) + '.' : 'Untick anything you will not take up. Approving adds the ticked items to the client as drafts, and new requests as custom documents.'}</p>

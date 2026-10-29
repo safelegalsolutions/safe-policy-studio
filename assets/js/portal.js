@@ -167,6 +167,7 @@
       ${r.safeNote ? `<div class="notice info" style="margin-top:10px"><b>From SAFE Legal:</b> ${esc(r.safeNote)}</div>` : ''}
       <table class="table" style="margin-top:10px"><tbody>${r.items.map((i) => `<tr><td>${i.type === 'custom' ? '<b>New:</b> ' : ''}${esc(i.title)}</td><td class="small" style="text-align:right">${i.stage ? esc(i.stage) : (!i.included && (r.status === 'Approved' || r.status === 'Completed')) ? '<span class="muted">Not included</span>' : r.status === 'Declined' ? '<span class="muted">Not taken up</span>' : '<span class="muted">Pending</span>'}</td></tr>`).join('')}</tbody></table>
       ${r.note ? `<p class="small muted" style="margin-top:8px">Your note: ${esc(r.note)}</p>` : ''}
+      <div style="margin-top:10px;text-align:right"><button class="btn small danger" data-action="withdraw" data-id="${esc(r.id)}">Delete request</button></div>
     </div>`).join('');
   }
 
@@ -204,6 +205,23 @@
     $('#rName').focus();
   }
 
+  function withdrawDialog(id) {
+    const r = st.data.requests.find((x) => x.id === id); if (!r) return;
+    const started = r.status === 'Approved' || r.status === 'Completed';
+    openModal('Delete this request?', `
+      <p>Request <b>${esc(r.id)}</b> (${r.items.length} item${r.items.length > 1 ? 's' : ''}) will be removed from your portal, and SAFE Legal Solutions will be informed.</p>
+      ${started ? '<p class="notice warn small">SAFE Legal has already started preparing documents for this request. They will be told to stop; documents already issued to you are not affected.</p>' : ''}
+      <form data-form="withdraw" data-id="${esc(id)}">
+        <label class="field">Reason for deleting <span class="req">*</span><textarea class="input" id="wReason" rows="3" maxlength="2000" required placeholder="e.g. Raised by mistake / no longer needed / will send a new request"></textarea></label>
+        <div class="grid2" style="margin-top:8px">
+          <label class="field">Your name<input class="input" id="wName" maxlength="120" value="${esc((r.requestedBy || {}).name || '')}"></label>
+          <label class="field">Your email<input class="input" id="wEmail" type="email" maxlength="160" value="${esc((r.requestedBy || {}).email || '')}"></label>
+        </div>
+        <div class="modal-actions"><button class="btn" type="button" data-action="close-modal">Keep request</button><button class="btn danger" type="submit">Delete request</button></div>
+      </form>`);
+    $('#wReason').focus();
+  }
+
   async function submitRequest() {
     const out = await api('portalRequest', {
       session: st.session,
@@ -233,6 +251,11 @@
       toast('Added – click "Review and submit" at the bottom to send it to SAFE Legal', 'ok'); render();
     }
     if (k === 'submit') run(submitRequest);
+    if (k === 'withdraw') run(async () => {
+      const out = await api('portalWithdraw', { session: st.session, requestId: f.dataset.id, reason: $('#wReason').value.trim(), withdrawnBy: { name: $('#wName').value.trim(), email: $('#wEmail').value.trim() } });
+      st.data = out.data; closeModal(); render();
+      toast('Request deleted – SAFE Legal has been informed', 'ok');
+    });
   });
 
   document.addEventListener('click', (e) => {
@@ -243,6 +266,7 @@
     else if (a === 'new-from-search') { st.tab = 'new'; st.prefill = st.q; render(); window.scrollTo(0, 0); const t = $('#cTitle'); if (t) t.focus(); }
     else if (a === 'close-modal') closeModal();
     else if (a === 'review') reviewDialog();
+    else if (a === 'withdraw') withdrawDialog(el.dataset.id);
     else if (a === 'remove-custom') { st.custom.splice(+el.dataset.i, 1); render(); }
     else if (a === 'pick') {
       const ind = S.industryById(st.data.client.industry);
