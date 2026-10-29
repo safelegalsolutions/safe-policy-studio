@@ -15,6 +15,7 @@
 ## Purpose
 1.1 This policy sets out how {{company.name}} (the "**Company**") protects personal data, in compliance with the Digital Personal Data Protection Act, 2023 (the "**DPDP Act**"), the Digital Personal Data Protection Rules, 2025 (the "**DPDP Rules**"), the Information Technology Act, 2000 and the CERT-In Directions, 2022[[if tag=insurance]], together with the IRDAI regulations and guidelines that apply to the Company[[endif]].
 1.2 It applies to all personal data processed by or for the Company, in digital form or in non-digital form that is later digitised, and to every employee, director, consultant and data processor.
+1.3 The DPDP Rules were notified on 13 November 2025 and take effect in phases: the provisions on the Data Protection Board applied at once; the provisions on Consent Managers apply from 13 November 2026; and most obligations of Data Fiduciaries (notice, security safeguards, breach intimation, retention, rights of data principals and others) apply from 13 May 2027. The Company adopts this policy now, ahead of those dates, so that it is ready when each obligation applies.
 
 ## Roles under the DPDP Act
 2.1 For the personal data of its employees, job applicants and its own business contacts, the Company is a **Data Fiduciary**.
@@ -49,7 +50,7 @@ The main categories are: {{dataCategories}}. Children's data and data of persons
 ## Security safeguards
 7.1 The Company implements reasonable security safeguards, including: encryption, obfuscation or masking where appropriate; access control by role; logging and monitoring of access; backups and business continuity; and contracts requiring equivalent safeguards from processors.
 7.2 Logs and personal data needed to detect and investigate breaches are retained for at least one year, as required by the DPDP Rules, and ICT system logs for 180 days in India, as required by the CERT-In Directions.
-7.3 {{ciso}} is responsible for information security.
+7.3 {{ciso}} is responsible for information security. The technical and organisational security controls are set out in the Company's separate IT and Information Security Policy, which forms part of these safeguards.
 
 ## Personal data breaches and cyber incidents
 8.1 Any suspected breach must be reported internally at once under the Personal Data Breach and Cyber Incident Response Plan.

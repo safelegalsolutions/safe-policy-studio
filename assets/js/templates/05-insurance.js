@@ -1,7 +1,7 @@
 /* Drafted templates — insurance broking (IRDAI-driven). */
 (function (root) {
   const S = root.SAFE;
-  const IRDAI_REGS = 'the IRDAI regulations applicable to insurance brokers (including the IRDAI (Insurance Brokers) Regulations, 2018, as amended or replaced)';
+  const IRDAI_REGS = '{{company.irdaiRegs|default:the IRDAI regulations applicable to insurance brokers (currently the IRDAI (Insurance Brokers) Regulations, 2018, as amended, and any regulations that replace them)}}';
 
   S.tpl('ins-broking-conduct', {
     v: '1.0',
@@ -71,7 +71,7 @@ This policy prohibits rebating, unauthorised commission sharing and similar indu
 - passing a part of incentives received from the Company to clients.
 
 ## Consequences
-4.1 Under section 41 of the Insurance Act, a person who contravenes this prohibition is liable to a penalty of up to ₹10 lakh.
+4.1 A person who contravenes section 41 of the Insurance Act, 1938 is liable to the penalty prescribed under that Act, as amended from time to time (including by the Sabka Bima Sabki Raksha (Amendment of Insurance Laws) Act, 2025), and the Company and the individual may also face action by IRDAI.
 4.2 Any breach is serious misconduct and will be dealt with under the Disciplinary Action and Domestic Inquiry Procedure, and the Company may report it to IRDAI.
 
 ## Reporting
@@ -252,10 +252,11 @@ This policy ensures that the Principal Officer and every Broker Qualified Person
 
 ## Requirements
 2.1 No person may solicit or service insurance business for the Company unless they hold the qualification and certification that IRDAI requires for the role.
-2.2 The Principal Officer and Broker Qualified Persons complete the training and pass the examination prescribed by IRDAI before they act in that capacity, and complete the continuing training prescribed before each renewal of the Company's licence.
+2.2 The Principal Officer and Broker Qualified Persons complete the training and pass the examination prescribed by IRDAI before they act in that capacity, and complete any continuing or refresher training that IRDAI prescribes, within the period it prescribes.
+2.3 The Company's certificate of registration with IRDAI is perpetual, subject to payment of the annual fee and continued compliance (following the Sabka Bima Sabki Raksha (Amendment of Insurance Laws) Act, 2025). The Company therefore tracks training and fit-and-proper requirements continuously, not only at a renewal date.
 
 ## Tracking
-{{trainingCoordinator}} keeps a register of every qualified person with their certificate number, date of certification and due date for renewal training, and alerts the person and their manager at least 90 days before the due date.
+{{trainingCoordinator}} keeps a register of every qualified person with their certificate number, date of certification and due date for any continuing training, and alerts the person and their manager at least 90 days before the due date.
 
 ## Other training
 All client-facing staff receive training on products, the code of conduct for broking staff, anti-rebating, AML/KYC, data protection and grievance handling on joining and every year.

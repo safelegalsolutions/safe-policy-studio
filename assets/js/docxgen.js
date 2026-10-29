@@ -65,8 +65,14 @@
     if (item.kind !== 'policy' && doc.ref) {
       out.push({ t: 'p', runs: [{ text: 'Ref: ' + doc.ref + '  |  Version ' + (doc.version || '') , i: true, small: true }], align: 'right' });
     }
-    return { blocks: out, blanks: S.countBlanks(out), templateVersion: r.templateVersion };
+    if (doc.status === 'Issued') stripConf(out);
+    return { blocks: out, blanks: S.countBlanks(out), confirms: S.countConfirm(out), templateVersion: r.templateVersion };
   };
+
+  function stripConf(blocks) {
+    const f = (runs) => runs.forEach((r) => { delete r.conf; });
+    blocks.forEach((b) => { if (b.runs) f(b.runs); if (b.rows) b.rows.forEach((row) => row.forEach(f)); });
+  }
 
   /** One compiled playbook: cover, contents, then every document. */
   S.composePlaybook = (client, docs, opts) => {
@@ -108,6 +114,7 @@
     if (r.color) p += `<w:color w:val="${r.color}"/>`;
     p += `<w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/>`;
     if (r.hl) p += '<w:highlight w:val="yellow"/>';
+    else if (r.conf && !r.noConf) p += '<w:highlight w:val="cyan"/>';
     p += '</w:rPr>';
     return `<w:r>${p}<w:t xml:space="preserve">${x(r.text)}</w:t></w:r>`;
   }
@@ -188,7 +195,7 @@
         case 'pagebreak':
           parts.push('<w:p><w:r><w:br w:type="page"/></w:r></w:p>'); break;
         default: {
-          const keepNext = !!(next && (next.t === 'bullet' || next.t === 'table') && /:\s*$/.test((b.runs[b.runs.length - 1] || {}).text || ''));
+          const keepNext = !!(next && (next.t === 'table' || (next.t === 'bullet' && /:\s*$/.test((b.runs[b.runs.length - 1] || {}).text || ''))));
           parts.push(pXml(b.runs || [], { jc: b.align === 'center' ? 'center' : b.align === 'right' ? 'right' : 'both', keepNext }, st));
         }
       }

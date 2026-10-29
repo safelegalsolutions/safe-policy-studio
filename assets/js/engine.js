@@ -49,6 +49,7 @@
     { k: 'jurisdiction', l: 'Courts with jurisdiction (city)', d: 'Bengaluru' },
     { k: 'regulators', l: 'Regulators (filled from industry; edit if needed)' },
     { k: 'regNo', l: 'Regulatory licence / registration no. (e.g. IRDAI licence)' },
+    { k: 'irdaiRegs', l: 'IRDAI regulations that apply (insurance clients only)', h: 'Leave blank to use: the IRDAI (Insurance Brokers) Regulations, 2018, as amended, and any regulations that replace them. Update when IRDAI notifies new intermediary regulations.' },
   ];
 
   // Document-control fields on every policy
@@ -64,7 +65,8 @@
 
   S.defaultOwner = (item) => ({
     'HR Playbook': 'Human Resources',
-    'Data protection and IT': 'Data Protection Officer / Head of IT',
+    'Data protection (DPDPA)': 'Data Protection Officer',
+    'IT and information security': 'Head of IT / Chief Information Security Officer',
     'Corporate governance and compliance': 'Company Secretary / Compliance Officer',
     'Industry-specific': 'Compliance Officer',
   }[item && item.cat] || 'Compliance Officer');
@@ -132,6 +134,37 @@
     return base;
   })(S.fieldsFor);
 
+  // ---------------- state laws ----------------
+  // Shops and Establishments / holidays laws by state. Figures that vary or change are left
+  // as ??highlighted?? text for the advocate to confirm.
+  S.STATE_LAWS = {
+    'Karnataka': { se: 'Karnataka Shops and Commercial Establishments Act, 1961', hol: 'Karnataka Industrial Employment (National and Festival Holidays) Act, 1963', holNote: 'Compulsory: 26 January, 1 May, 15 August, 2 October and 1 November (Kannada Rajyotsava); other festival holidays ??to be confirmed??' },
+    'Telangana': { se: 'Telangana Shops and Establishments Act, 1988', hol: 'Telangana national and festival holidays law ??confirm Act and notification??' },
+    'Andhra Pradesh': { se: 'Andhra Pradesh Shops and Establishments Act, 1988', hol: 'Andhra Pradesh national and festival holidays law ??confirm Act and notification??' },
+    'Maharashtra': { se: 'Maharashtra Shops and Establishments (Regulation of Employment and Conditions of Service) Act, 2017', hol: 'Maharashtra Shops and Establishments Act, 2017 (festival holidays)', holNote: 'National holidays including 1 May (Maharashtra Day) and the paid festival holidays required by the 2017 Act ??confirm number??' },
+    'Tamil Nadu': { se: 'Tamil Nadu Shops and Establishments Act, 1947', hol: 'Tamil Nadu Industrial Establishments (National and Festival Holidays) Act, 1958' },
+    'Kerala': { se: 'Kerala Shops and Commercial Establishments Act, 1960', hol: 'Kerala Industrial Establishments (National and Festival Holidays) Act, 1958' },
+    'Delhi': { se: 'Delhi Shops and Establishments Act, 1954', hol: 'Delhi Shops and Establishments Act, 1954' },
+    'Gujarat': { se: 'Gujarat Shops and Establishments (Regulation of Employment and Conditions of Service) Act, 2019', hol: 'Gujarat Shops and Establishments Act, 2019' },
+    'West Bengal': { se: 'West Bengal Shops and Establishments Act, 1963', hol: 'West Bengal Shops and Establishments Act, 1963' },
+    'Haryana': { se: 'Punjab Shops and Commercial Establishments Act, 1958 (as applicable in Haryana)', hol: 'Haryana national and festival holidays law ??confirm??' },
+    'Uttar Pradesh': { se: 'Uttar Pradesh Dookan Aur Vanijya Adhishthan Adhiniyam, 1962', hol: 'Uttar Pradesh Dookan Aur Vanijya Adhishthan Adhiniyam, 1962' },
+    'Rajasthan': { se: 'Rajasthan Shops and Commercial Establishments Act, 1958', hol: 'Rajasthan Shops and Commercial Establishments Act, 1958' },
+  };
+  S.statesOf = (company) => String((company && company.states) || '').split(/,|\n/).map((x) => x.trim()).filter(Boolean);
+  S.stateRows = (company, kind) => {
+    const states = S.statesOf(company);
+    if (!states.length) return '| ??State?? | ??Applicable law?? | ??to be confirmed?? |';
+    return states.map((st) => {
+      const key = Object.keys(S.STATE_LAWS).find((k) => k.toLowerCase() === st.toLowerCase());
+      const law = key ? S.STATE_LAWS[key] : null;
+      if (kind === 'holiday') {
+        return '| ' + st + ' | ' + (law ? law.hol : '??Holidays law of ' + st + '??') + ' | ' + (law && law.holNote ? law.holNote : '??Compulsory national and festival holidays to be confirmed??') + ' |';
+      }
+      return '| ' + st + ' | ' + (law ? law.se : '??Shops and Establishments Act of ' + st + '??') + ' | ??Minimum earned, casual and sick leave to be confirmed?? |';
+    }).join('\n');
+  };
+
   // ---------------- helpers ----------------
   const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
   S.fmtDate = (iso) => {
@@ -162,12 +195,19 @@
       .concat(S.DOC_FIELDS.map((f) => ({ k: 'doc.' + f.k, l: f.l })))
       .forEach((f) => { labels[f.k] = f.l; });
     // defaults
-    fields.forEach((f) => { if ((values[f.k] === undefined || values[f.k] === '') && f.d !== undefined) values[f.k] = f.d; });
+    const defaulted = new Set();
+    fields.forEach((f) => {
+      if (values[f.k] !== undefined && values[f.k] !== '') return;
+      const d = f.dfn ? f.dfn(company) : f.d;
+      if (d === undefined || d === '') return;
+      values[f.k] = d;
+      defaulted.add(f.k);
+    });
     const meta = Object.assign({}, doc.meta || {});
     S.DOC_FIELDS.forEach((f) => { if (!meta[f.k] && f.d) meta[f.k] = f.k === 'owner' ? S.defaultOwner(item) : f.d; });
     meta.ref = doc.ref; meta.version = doc.version; meta.title = item.title;
     return {
-      values, company, doc: meta, labels, item, tplDef,
+      values, company, doc: meta, labels, item, tplDef, defaulted,
       industry: { id: industry.id, name: company.industryName, group: industry.group || '', tags: industry.tags || [], reg: (client.regulators ? String(client.regulators).split(',').map((s) => s.trim()) : industry.reg) || [] },
       docTitle: item.title,
     };
@@ -244,8 +284,10 @@
     const segs = text.split('**');
     segs.forEach((seg, si) => {
       const bold = si % 2 === 1;
-      seg.split(/(\{\{[^}]+\}\})/).forEach((part) => {
+      seg.split(/(\{\{[^}]+\}\}|\?\?[^?]+\?\?)/).forEach((part) => {
         if (!part) return;
+        const qm = /^\?\?([^?]+)\?\?$/.exec(part);
+        if (qm) { runs.push(Object.assign({}, base, { text: '[' + qm[1] + ']', hl: true, b: base.b || bold })); return; }
         const pm = /^\{\{([^}|]+)(?:\|([^}]+))?\}\}$/.exec(part);
         if (!pm) { runs.push(Object.assign({}, base, { text: part, b: base.b || bold })); return; }
         const key = pm[1].trim();
@@ -260,6 +302,8 @@
           return;
         }
         val = String(val);
+        const conf = ctx.defaulted && ctx.defaulted.has(key) ? { conf: true } : {};
+        if (/\?\?[^?]+\?\?/.test(val)) { inline(val.replace(/\n/g, ' '), ctx, Object.assign({}, base, conf, { b: base.b || bold })).forEach((r) => runs.push(r)); return; }
         if (filter === 'date') val = S.fmtDate(val);
         else if (filter === 'upper') val = val.toUpperCase();
         else if (filter === 'lower') val = val.toLowerCase();
@@ -267,7 +311,7 @@
         else if (filter === 'num') val = Number(val).toLocaleString('en-IN');
         val.split('\n').forEach((ln, li) => {
           if (li > 0) runs.push({ br: true, text: '' });
-          runs.push(Object.assign({}, base, { text: ln, b: base.b || bold }));
+          runs.push(Object.assign({}, base, conf, { text: ln, b: base.b || bold }));
         });
       });
     });
@@ -331,6 +375,9 @@
     const def = S.TEMPLATES[item.id];
     let body = def ? def.body : skeletonBody(item);
     body = body.trim() + '\n{{additionalClauses}}';
+    if (item.kind === 'policy' && item.cat === 'HR Playbook') {
+      body += '\n## Applicable law and transition\nReferences in this policy to the Code on Wages, 2019, the Industrial Relations Code, 2020, the Code on Social Security, 2020 and the Occupational Safety, Health and Working Conditions Code, 2020 (in force from 21 November 2025) include the rules made under them by the Central Government and by each State Government. Where a State has not yet notified its rules under a Code, or a provision has not yet taken effect, the corresponding provisions of the earlier laws and rules continue to apply to the extent they are consistent with the Code. The Shops and Establishments Act of each State where the Company operates continues to apply alongside the Codes. Where any law gives an employee a more favourable right than this policy, that law prevails.';
+    }
     if (item.kind === 'policy') {
       body += '\n## Review and amendment\n{{company.name}} will review this policy at least once a year, and earlier if the law or its business changes. {{doc.approvedBy}} approves amendments. The approved version in force is the one on record with {{doc.owner}}; it overrides any earlier version or practice.';
     }
@@ -355,6 +402,16 @@
     return { item, ctx, blocks, templateVersion: def ? def.v : 'skeleton' };
   };
 
+  /** Count default values not yet confirmed (shown in blue). */
+  S.countConfirm = (blocks) => {
+    const keys = new Set();
+    let c = 0;
+    const scan = (runs) => runs.forEach((r) => { if (r.conf && !r.hl) c++; });
+    blocks.forEach((b) => { if (b.runs) scan(b.runs); if (b.rows) b.rows.forEach((row) => row.forEach(scan)); });
+    void keys;
+    return c;
+  };
+
   /** Count unfilled blanks in rendered blocks. */
   S.countBlanks = (blocks) => {
     let c = 0;
@@ -374,6 +431,7 @@
     if (r.b) h = '<strong>' + h + '</strong>';
     if (r.i) h = '<em>' + h + '</em>';
     if (r.hl) h = '<mark>' + h + '</mark>';
+    else if (r.conf) h = '<mark class="conf" title="SAFE default – confirm or change">' + h + '</mark>';
     return h;
   }).join('');
   S.blocksToHtml = (blocks) => blocks.map((b) => {

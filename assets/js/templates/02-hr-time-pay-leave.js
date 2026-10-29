@@ -21,7 +21,7 @@ This policy sets the working hours, breaks, weekly off and attendance rules of {
 
 ## Working days and hours
 2.1 The normal working days are {{workDays}}. Office hours are {{officeHours}}, which include a break of {{breakMinutes}} minutes.
-2.2 No employee will be required to work more than {{dailyHours}} hours in a day or {{weeklyHours}} hours in a week, excluding overtime permitted by law, and the spread-over of a working day will not exceed the limit in the applicable state law.
+2.2 No employee will be required to work more than {{dailyHours}} hours in a day or {{weeklyHours}} hours in a week, excluding overtime permitted by law, and the spread-over of a working day, including rest intervals, will not exceed 12 hours under the OSH Code, or any lower limit in the applicable state law.
 2.3 No employee will work for more than five hours continuously without a rest interval of at least half an hour.
 2.4 Every employee gets at least one full day's weekly holiday. Where an employee is required to work on the weekly holiday, a substituted holiday is given within the period allowed by law.
 
@@ -209,6 +209,7 @@ Overtime hours and payments are recorded in the overtime register required by la
       { k: 'sickCertDays', l: 'Medical certificate required for sick leave of more than (days)', t: 'number', d: '2' },
       { k: 'elNoticeDays', l: 'Notice for planned earned leave (days)', t: 'number', d: '7' },
       { k: 'leaveApprover', l: 'Who approves leave', d: 'the reporting manager' },
+      { k: 'stateLeaveBlock', l: 'State-wise leave minimums (one row per state: | State | Law | Minimum leave |)', t: 'textarea', dfn: (c) => SAFE.stateRows(c, 'leave'), h: 'Pre-filled from the states in the company profile. Text in [brackets] must be confirmed.' },
     ],
     body: `
 ## Purpose
@@ -246,6 +247,11 @@ Casual leave is for short, unforeseen needs. It is normally taken for not more t
 ## Leave on separation
 On separation, the balance of earned leave is encashed in the full and final settlement. Leave cannot be adjusted against the notice period without the Company's written approval.
 
+## State-wise minimums
+The entitlements in this policy are not less than the minimums below. If a state law gives more, employees in that state receive the higher entitlement.
+| State | Law | Minimum leave under state law |
+{{stateLeaveBlock}}
+
 ## Records
 The Company maintains leave registers in the form required under the OSH Code and the applicable state law.
 `,
@@ -257,6 +263,7 @@ The Company maintains leave registers in the form required under the OSH Code an
       { k: 'holidayYear', l: 'Calendar year', d: '2027' },
       { k: 'totalHolidays', l: 'Total paid holidays per year', t: 'number', d: '10' },
       { k: 'optionalHolidays', l: 'Optional / restricted holidays an employee may choose', t: 'number', d: '2' },
+      { k: 'stateHolidayBlock', l: 'State-wise holiday law (one row per state: | State | Law | Compulsory holidays |)', t: 'textarea', dfn: (c) => SAFE.stateRows(c, 'holiday'), h: 'Pre-filled from the states in the company profile. Text in [brackets] must be confirmed.' },
       { k: 'holidayTableBlock', l: 'Holiday list (one per line: | Date | Day | Holiday | Offices |)', t: 'textarea', d: '| 26 January | | Republic Day | All offices |\n| 1 May | | May Day / Labour Day | All offices |\n| 15 August | | Independence Day | All offices |\n| 2 October | | Gandhi Jayanti | All offices |' },
     ],
     body: `
@@ -266,9 +273,9 @@ This policy sets out the paid holidays of {{company.name}} (the "**Company**") a
 ## Number of holidays
 2.1 Employees are entitled to {{totalHolidays}} paid holidays in each calendar year, including the national holidays of Republic Day (26 January), Labour Day (1 May), Independence Day (15 August) and Gandhi Jayanti (2 October), and festival holidays.
 2.2 In addition, employees may choose {{optionalHolidays}} optional holidays from the optional list.
-[[if state=Karnataka]]
-2.3 For offices in Karnataka, Kannada Rajyotsava (1 November) is also a compulsory paid holiday under the Karnataka Industrial Employment (National and Festival Holidays) Act, 1963.
-[[endif]]
+2.3 Each office also observes the compulsory holidays required by the law of its state:
+| State | Law | Compulsory holidays |
+{{stateHolidayBlock}}
 
 ## Holiday list for {{holidayYear}}
 HR publishes the holiday list for each office before the start of the year, after consulting employees where the state law requires it, and sends any list required to the labour authorities.

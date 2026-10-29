@@ -145,13 +145,6 @@ function handle_(req) {
       db.docs = db.docs.filter(function (d) { return d.id !== req.id; });
       writeDb_(db);
       return { ok: true };
-    case 'deleteDocs':
-      db = readDb_();
-      var gone = {};
-      (req.ids || []).forEach(function (x) { gone[x] = true; });
-      db.docs = db.docs.filter(function (d) { return !gone[d.id]; });
-      writeDb_(db);
-      return { ok: true };
     case 'saveSettings':
       db = readDb_();
       db.settings = req.settings || {};

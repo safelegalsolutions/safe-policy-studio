@@ -5,9 +5,12 @@
   S.tpl('hr-posh', {
     v: '1.0',
     fields: [
-      { k: 'icPresiding', l: 'IC Presiding Officer (senior woman employee) – name and designation' },
-      { k: 'icMembers', l: 'IC employee members (one per line: name – designation)', t: 'textarea' },
-      { k: 'icExternal', l: 'IC external member – name and organisation' },
+      { k: 'icOffice', l: 'Office covered by this IC (main office)', h: 'An IC is required at each office or unit with 10 or more workers.' },
+      { k: 'icPresiding', l: 'IC Presiding Officer – a woman employed at a senior level (name and designation)' },
+      { k: 'icMembers', l: 'IC employee members – at least two (one per line: name – designation)', t: 'textarea', h: 'Preferably committed to the cause of women, or with experience in social work or legal knowledge. At least half of all IC members must be women.' },
+      { k: 'icExternal', l: 'IC external member – from an NGO or association committed to the cause of women, or a person familiar with sexual harassment issues (name and organisation)' },
+      { k: 'icOtherOffices', l: 'ICs at other offices with 10 or more workers (one per line: office – Presiding Officer; members; external member)', t: 'textarea' },
+      { k: 'districtOfficer', l: 'District Officer(s) to whom the annual report is sent' },
       { k: 'icEmail', l: 'IC email for complaints', d: '' },
       { k: 'icTenureYears', l: 'Tenure of IC members (years, max 3)', t: 'number', d: '3' },
       { k: 'genderNeutral', l: 'Also cover complaints by men and persons of other genders under the same process?', t: 'select', o: ['yes', 'no'], d: 'yes' },
@@ -35,14 +38,18 @@
 3.2 The following, when connected with sexual conduct, may also amount to sexual harassment: implied or explicit promise of preferential treatment; implied or explicit threat of detrimental treatment; threat about present or future employment status; interference with work or creating an intimidating, offensive or hostile work environment; and humiliating treatment likely to affect health or safety.
 
 ## Internal Committee
-4.1 The Company has constituted an Internal Committee (the "**IC**") under section 4 of the POSH Act. Where the Company has more than one office with 10 or more employees, an IC is constituted at each such office or a common IC covers them as permitted.
-4.2 The IC consists of:
+4.1 Under section 4 of the POSH Act, the Company has constituted an Internal Committee (the "**IC**") at each of its offices or administrative units where 10 or more workers are employed.
+4.2 Each IC consists of: (a) a Presiding Officer, who is a woman employed at a senior level; (b) at least two members from among the employees, preferably committed to the cause of women or with experience in social work or legal knowledge; and (c) one external member from a non-governmental organisation or association committed to the cause of women, or a person familiar with issues relating to sexual harassment.
+4.3 The IC for {{icOffice}} is:
 | Role | Name |
 | Presiding Officer | {{icPresiding}} |
 | Members (employees) | {{icMembers}} |
 | External member | {{icExternal}} |
-4.3 At least one-half of the members are women. Members hold office for not more than {{icTenureYears}} years from their nomination.
-4.4 Complaints may be sent to the IC at {{icEmail}} or handed to any IC member. The composition and contact details of the IC are displayed at each office.
+[[if icOtherOffices]]
+4.4 The ICs at the Company's other offices are: {{icOtherOffices}}
+[[endif]]
+4.5 At least one-half of the members of each IC are women. Members hold office for not more than {{icTenureYears}} years from their nomination. The external member is paid the fees and allowances prescribed under the POSH Rules.
+4.6 Complaints may be sent to the IC at {{icEmail}} or handed to any IC member. The composition and contact details of the IC are displayed at each office.
 
 ## Making a complaint
 5.1 An aggrieved woman may make a written complaint to the IC within three months of the incident, or of the last incident in a series. The IC may extend this by a further three months if satisfied that circumstances prevented a complaint in time.
@@ -65,7 +72,7 @@ During the inquiry, on a written request by the aggrieved woman, the IC may reco
 9.2 If the IC finds the complaint false or malicious, or that evidence was forged, it may recommend action against the person responsible. A mere inability to substantiate a complaint or provide adequate proof is not grounds for action against the complainant.
 
 ## Appeal
-Any person aggrieved by the IC's recommendations, or by non-implementation of them, may appeal to the appellate authority under the applicable service rules or the POSH Act within 90 days of the recommendations.
+Any person aggrieved by the IC's recommendations, or by non-implementation of them, may appeal under section 18 of the POSH Act and rule 11 of the POSH Rules, to the court or tribunal specified in the service rules applicable to them or, where there are none, to the appellate authority prescribed under those rules, within 90 days of the recommendations.
 
 ## Confidentiality
 The identity and address of the aggrieved woman, respondent and witnesses, the complaint, the proceedings, the recommendations and the action taken are confidential and must not be published or disclosed, except as allowed by section 16 of the POSH Act. Breach of confidentiality is misconduct and attracts the penalty prescribed under the POSH Act.
@@ -84,7 +91,7 @@ The Company will:
 - monitor timely submission of reports by the IC.
 
 ## Annual report and SHe-Box
-14.1 The IC prepares an annual report in the prescribed form and submits it to the Company and to the District Officer. The Company includes the number of cases filed and disposed of in its annual report under section 22 of the POSH Act, or informs the District Officer where it does not prepare an annual report.
+14.1 The IC prepares an annual report in the prescribed form and submits it to the Company and to the District Officer ({{districtOfficer}}). The Company includes the number of cases filed and disposed of in its annual report under section 22 of the POSH Act, or informs the District Officer where it does not prepare an annual report.
 14.2 The Company is {{sheBox}}.
 
 ## Penalty for non-compliance
@@ -235,7 +242,7 @@ The Committee records each grievance, the hearing and its decision. HR keeps the
   S.tpl('hr-standing-orders', {
     v: '1.0',
     fields: [
-      { k: 'certStatus', l: 'Status of standing orders under the IR Code', t: 'select', o: ['not yet applicable (below threshold); adopted as service rules', 'model standing orders apply', 'certified standing orders in force'], d: 'not yet applicable (below threshold); adopted as service rules' },
+      { k: 'certStatus', l: 'Status of standing orders under the IR Code', t: 'select', o: ['not yet applicable (below threshold); adopted as service rules', 'model standing orders apply', 'certified standing orders in force', 'standing orders certified under the 1946 Act continue to apply'], d: 'not yet applicable (below threshold); adopted as service rules' },
       { k: 'probationMonths', l: 'Probation period (months)', t: 'number', d: '6' },
       { k: 'noticeConfirmed', l: 'Notice period for confirmed employees (days)', t: 'number', d: '30' },
       { k: 'noticeProbation', l: 'Notice period during probation (days)', t: 'number', d: '15' },
@@ -246,6 +253,9 @@ The Committee records each grievance, the hearing and its decision. HR keeps the
 1.1 These service rules set out the conditions of service at {{company.name}} (the "**Company**") on the matters listed in the First Schedule to the Industrial Relations Code, 2020 (the "**IR Code**").
 1.2 Under section 28 of the IR Code, standing orders are required in industrial establishments with 300 or more workers. Some state laws apply standing orders at lower thresholds. Status for the Company: {{certStatus}}.
 1.3 Where model standing orders or certified standing orders apply, they prevail over these service rules to the extent of any inconsistency.
+[[if certStatus=standing orders certified under the 1946 Act continue to apply]]
+1.4 The Company's standing orders were certified under the Industrial Employment (Standing Orders) Act, 1946 before the IR Code came into force on 21 November 2025. They continue to apply without fresh certification under the transitional provisions of the IR Code until they are modified under the IR Code. These service rules supplement them.
+[[endif]]
 
 ## Classification of employees
 2.1 Employees are classified as permanent, probationer, fixed-term, trainee or apprentice. Each employee's classification is stated in their appointment letter.

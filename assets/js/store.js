@@ -58,7 +58,6 @@
     async saveDoc(d) { upsert(this.db.docs, d); await this._save(); return d; }
     async saveDocs(ds) { ds.forEach((d) => upsert(this.db.docs, d)); await this._save(); }
     async deleteDoc(id) { this.db.docs = this.db.docs.filter((d) => d.id !== id); await this._save(); }
-    async deleteDocs(ids) { const s = new Set(ids); this.db.docs = this.db.docs.filter((d) => !s.has(d.id)); await this._save(); }
     async saveSettings(s) { this.db.settings = s; await this._save(); }
     async putFile({ name, mime, data }) { const id = S.uid('file'); await kvSet('file:' + id, { name, mime, b64: S.bufToB64(data) }); return { fileId: id }; }
     async getFile(fileId) { const f = await kvGet('file:' + fileId); if (!f) throw new Error('File not found in this browser'); return { name: f.name, mime: f.mime, data: S.b64ToBuf(f.b64) }; }
@@ -87,14 +86,6 @@
     async saveDoc(d) { await this.call('saveDoc', { doc: d }); upsert(this.db.docs, d); return d; }
     async saveDocs(ds) { await this.call('saveDocs', { docs: ds }); ds.forEach((d) => upsert(this.db.docs, d)); }
     async deleteDoc(id) { await this.call('deleteDoc', { id }); this.db.docs = this.db.docs.filter((d) => d.id !== id); }
-    async deleteDocs(ids) {
-      try { await this.call('deleteDocs', { ids }); }
-      catch (e) {
-        if (!/Unknown action/.test(e.message)) throw e;
-        for (const id of ids) await this.call('deleteDoc', { id }); // older backend without bulk delete
-      }
-      const s = new Set(ids); this.db.docs = this.db.docs.filter((d) => !s.has(d.id));
-    }
     async saveSettings(s) { await this.call('saveSettings', { settings: s }); this.db.settings = s; }
     async putFile({ clientId, name, mime, data, folder }) {
       const r = await this.call('upload', { clientId, name, mime, folder, base64: S.bufToB64(data) });

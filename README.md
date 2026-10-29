@@ -9,6 +9,8 @@ An internal web app for **SAFE Legal Solutions** to generate policies, policy pl
 - **Library:** 279 documents across the HR Playbook (the full 109-item Ethika list, sections A–O, plus extra letters), data protection and IT, corporate governance, industry-specific policies and agreements. Each is tagged **M** (mandatory by law), **I** (industry or regulator-driven) or **R** (recommended).
   - **47 are fully drafted** (`assets/js/templates/`): all prompts, conditional clauses and cross-references.
   - The rest are **structure-only**: they generate a correctly laid-out document with document control, scope, roles, breach and review clauses, and a box for the operative provisions. Each one becomes fully drafted when its template is added (see "Adding a template").
+- **SAFE defaults to confirm:** suggested values (leave days, notice periods, limits) show in blue until accepted or changed. A document cannot be issued while any remain. Use **Accept all defaults** after checking them.
+- **State-wise tables:** leave and holiday policies list each state from the company profile with its law; items to confirm are highlighted.
 - **Prompts and placeholders:** every document shows only the prompts it needs. Answers are shared across a client's documents, so each detail is typed once. Anything left blank prints as a yellow-highlighted `[placeholder]`.
 - **Letterhead:** upload the client's letterhead as a Word file (.docx: header, footer, logo and margins are kept and the content is written into it) or as an image (PNG/JPG: placed edge to edge at the top of each page, with an optional footer image).
 - **Word output:** each document downloads as .docx. Headings are bold paragraphs rather than Word heading styles, so Word shows no collapse arrows.

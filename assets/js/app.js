@@ -18,7 +18,7 @@
   const st = {
     store: null, db: null, clientId: null, tab: null, docId: null, work: null,
     lib: { q: '', cat: 'All', tags: { M: true, I: true, R: true }, relevantOnly: true, readyOnly: false, selected: new Set() },
-    docFilter: 'All', docQ: '', docSel: new Set(), lhCache: {}, busy: false,
+    docFilter: 'All', docQ: '', lhCache: {}, busy: false,
   };
 
   // ---------------------------------------------------------------- utilities
@@ -329,7 +329,7 @@
     const L = st.lib;
     const added = new Set(clientDocs().map((d) => d.itemId));
     const q = L.q.toLowerCase();
-    const match = (it) => (L.cat === 'All' || it.cat === L.cat) && L.tags[it.tag] && (!q || it.title.toLowerCase().includes(q) || it.sectionTitle.toLowerCase().includes(q))
+    const match = (it) => (L.cat === 'All' || it.cat === L.cat) && L.tags[it.tag] && (!q || (it.title + ' ' + it.sectionTitle + ' ' + it.cat + ' ' + (it.keywords || '')).toLowerCase().includes(q))
       && (!L.relevantOnly || S.isRelevant(it, ind)) && (!L.readyOnly || S.isDrafted(it.id));
     const relevantCount = S.ITEMS.filter((it) => S.isRelevant(it, ind)).length;
     let html = `
@@ -421,7 +421,7 @@
     const statuses = ['All', 'Draft', 'Under review', 'Advocate reviewed', 'Issued', 'Archived'];
     const q = st.docQ.toLowerCase();
     const order = S.ITEMS.map((i) => i.id);
-    const list = all.filter((d) => (st.docFilter === 'All' || d.status === st.docFilter) && (!q || d.title.toLowerCase().includes(q) || (d.ref || '').toLowerCase().includes(q)))
+    const list = all.filter((d) => (st.docFilter === 'All' || d.status === st.docFilter) && (!q || (d.title + ' ' + (d.ref || '') + ' ' + ((S.itemById(d.itemId) || {}).keywords || '')).toLowerCase().includes(q)))
       .sort((a, b) => order.indexOf(a.itemId) - order.indexOf(b.itemId));
     const count = (s) => all.filter((d) => s === 'All' || d.status === s).length;
     return `
@@ -429,16 +429,14 @@
         <div class="chips">${statuses.map((s) => `<button class="chip ${st.docFilter === s ? 'on' : ''}" data-action="doc-filter" data-status="${s}">${s} (${count(s)})</button>`).join('')}</div>
         <input class="input" style="max-width:260px" type="search" placeholder="Search documents" value="${esc(st.docQ)}" data-docq>
       </div>
-      ${(() => { const ids = new Set(all.map((d) => d.id)); [...st.docSel].forEach((id) => { if (!ids.has(id)) st.docSel.delete(id); }); return ''; })()}
-      <div class="row" style="margin-bottom:10px;min-height:34px">${st.docSel.size ? `<span class="small"><b>${st.docSel.size}</b> selected</span><button class="btn small danger" data-action="delete-docs">Delete selected (${st.docSel.size})</button><button class="btn small ghost" data-action="docsel-clear">Clear selection</button>` : '<span class="muted small">Tick documents to delete several at once.</span>'}</div>
-      <div class="card" style="padding:0"><div class="table-wrap"><table class="table"><thead><tr><th style="width:34px"><input type="checkbox" data-docsel-all title="Select all shown" ${list.length && list.every((d) => st.docSel.has(d.id)) ? 'checked' : ''}></th><th>Reference</th><th>Document</th><th></th><th>Version</th><th>Status</th><th>Expiry</th><th></th></tr></thead><tbody>
+      <div class="card" style="padding:0"><div class="table-wrap"><table class="table"><thead><tr><th>Reference</th><th>Document</th><th></th><th>Version</th><th>Status</th><th>Expiry</th><th></th></tr></thead><tbody>
       ${list.map((d) => {
         const it = S.itemById(d.itemId) || {};
         const e = expiryInfo(d);
         const ver = d.issued && d.status !== 'Issued' && d.status !== 'Archived' ? `${esc(d.issued.version)} in force<br><span class="muted small">v${esc(d.version)} in draft</span>` : esc(d.version);
-        return `<tr><td><input type="checkbox" data-docsel="${d.id}" ${st.docSel.has(d.id) ? 'checked' : ''}></td><td class="small">${esc(d.ref)}</td><td><b>${esc(d.title)}</b><div class="muted small">${esc(it.sectionTitle || '')}</div></td><td><span class="tag ${it.tag}">${it.tag}</span></td><td>${ver}</td><td><span class="status ${esc(d.status)}">${esc(d.status)}</span></td><td class="${e.cls} small">${e.text}</td>
+        return `<tr><td class="small">${esc(d.ref)}</td><td><b>${esc(d.title)}</b><div class="muted small">${esc(it.sectionTitle || '')}</div></td><td><span class="tag ${it.tag}">${it.tag}</span></td><td>${ver}</td><td><span class="status ${esc(d.status)}">${esc(d.status)}</span></td><td class="${e.cls} small">${e.text}</td>
         <td class="row" style="flex-wrap:nowrap"><button class="btn small" data-action="open-doc" data-id="${d.id}">Open</button><button class="btn small ghost" data-action="download-doc" data-id="${d.id}" title="Download Word">⤓</button></td></tr>`;
-      }).join('') || '<tr><td colspan="8" class="muted">No documents match.</td></tr>'}
+      }).join('') || '<tr><td colspan="7" class="muted">No documents match.</td></tr>'}
       </tbody></table></div></div>`;
   }
 
@@ -515,7 +513,6 @@
     if (d.status === 'Advocate reviewed') actions.push(`<button class="btn gold" data-action="wf-issue">Issue v${d.issued ? esc(d.version) : '1.0'}</button>`, '<button class="btn ghost" data-action="wf" data-to="Draft">Back to draft</button>');
     if (d.status === 'Issued') actions.push('<button class="btn" data-action="wf-revise">Revise (new version)</button>', '<button class="btn ghost" data-action="wf" data-to="Archived">Archive</button>');
     if (d.status === 'Archived') actions.push('<button class="btn" data-action="wf" data-to="' + (d.issued ? 'Issued' : 'Draft') + '">Restore</button>');
-    actions.push('<button class="btn danger" data-action="delete-doc">Delete</button>');
     const locked = d.status === 'Issued' || d.status === 'Archived';
     return `
       <div class="page-head">
@@ -538,7 +535,7 @@
           <label class="field">Title (change only if the client uses a different name)<input class="input" data-wf="customTitle" value="${esc(w.customTitle)}" placeholder="${esc(it.title)}" ${locked ? 'disabled' : ''}></label>
           ${docFields.map((f) => fieldInput(f, w.meta[f.k], 'meta.')).join('')}
           <div class="group-title">${S.isDrafted(it.id) ? 'Prompts for this document' : 'Content'}</div>
-          ${fields.length ? fields.map((f) => fieldInput(f, w.values[f.k], 'val.')).join('') : '<p class="muted small">No extra prompts. Company details come from the profile.</p>'}
+          ${fields.length ? fields.map((f) => fieldInput(f.dfn ? Object.assign({}, f, { d: f.dfn(c) }) : f, w.values[f.k], 'val.')).join('') : '<p class="muted small">No extra prompts. Company details come from the profile.</p>'}
           <p class="small muted">Company details (name, address, offices, signatory, data protection contacts) come from the <button class="link-btn" data-action="edit-profile">company profile</button>.</p>
         </div>
         <div>
@@ -585,7 +582,12 @@
         const comp = S.composeDocument(c, d);
         pv.innerHTML = blocksToPreview(comp.blocks);
         const bi = $('#blankInfo');
-        if (bi) bi.innerHTML = comp.blanks ? `<span class="exp-warn">${comp.blanks} blank${comp.blanks > 1 ? 's' : ''} to complete (highlighted)</span>` : '<span class="exp-ok">No blanks</span>';
+        if (bi) {
+          const parts = [];
+          parts.push(comp.blanks ? `<span class="exp-warn">${comp.blanks} blank${comp.blanks > 1 ? 's' : ''} to complete (yellow)</span>` : '<span class="exp-ok">No blanks</span>');
+          if (comp.confirms) parts.push(`<span class="conf-note">${comp.confirms} SAFE default${comp.confirms > 1 ? 's' : ''} to confirm (blue)</span> <button class="btn small" data-action="accept-defaults">Accept all defaults</button>`);
+          bi.innerHTML = parts.join(' · ');
+        }
       } catch (e) { pv.innerHTML = '<p class="exp-bad">Preview error: ' + esc(e.message) + '</p>'; }
     }, 120);
   }
@@ -635,6 +637,17 @@
     saveBlob(new Blob([data], { type: mime }), fileSafe(`${d.ref} ${h.customTitle || d.title} v${h.version}.docx`));
   }
 
+  function acceptDefaults() {
+    const d = docById(st.docId);
+    const c = st.db.clients.find((x) => x.id === d.clientId);
+    S.fieldsFor(d.itemId).forEach((f) => {
+      const cur = st.work.values[f.k];
+      if (cur !== undefined && cur !== '') return;
+      const dv = f.dfn ? f.dfn(c) : f.d;
+      if (dv !== undefined && dv !== '') st.work.values[f.k] = dv;
+    });
+  }
+
   // workflow
   async function setStatus(to) {
     await saveDoc(true);
@@ -668,6 +681,10 @@
     const it = S.itemById(d.itemId);
     const c = st.db.clients.find((x) => x.id === d.clientId);
     const comp = S.composeDocument(c, d);
+    if (comp.confirms) {
+      openModal('Confirm the default values first', `<p>This document still uses ${comp.confirms} SAFE default value${comp.confirms > 1 ? 's' : ''} (shown in blue), such as leave days, notice periods or limits. These are commercial choices for the client.</p><p class="muted small">Change any that differ for this client in the prompts on the left, or accept them all as they are.</p><div class="modal-actions"><button class="btn" data-action="close-modal">Review them</button><button class="btn primary" data-action="accept-defaults-issue">Accept all and continue</button></div>`);
+      return;
+    }
     const ver = d.issued ? d.version : '1.0';
     const eff = d.meta.effectiveDate || todayIso();
     const exp = d.meta.expiryDate || addMonthsIso(eff, it.validityMonths);
@@ -860,27 +877,9 @@
       'go-home': () => { st.clientId = null; st.docId = null; st.work = null; renderAll(); },
       'new-client': newClientDialog,
       'create-client': () => run(createClient),
-      'open-client': () => { st.clientId = el.dataset.id; st.docSel.clear(); st.docId = null; st.work = null; st.tab = null; st.lib.selected.clear(); renderAll(); $('#main').focus(); },
+      'open-client': () => { st.clientId = el.dataset.id; st.docId = null; st.work = null; st.tab = null; st.lib.selected.clear(); renderAll(); $('#main').focus(); },
       'tab': () => { st.tab = el.dataset.tab; st.docId = null; renderAll(); },
       'save-profile': () => run(() => saveProfile()),
-      'delete-doc': () => run(async () => {
-        const d = docById(st.docId);
-        if (!d) return;
-        const msg = d.issued
-          ? `Delete "${d.title}" (${d.ref}) permanently? It has been issued (v${d.issued.version}). Its version history and renewal reminders will be removed. Word files already saved on Google Drive are not deleted.`
-          : `Delete "${d.title}" (${d.ref})? You can add it again from the library.`;
-        if (!confirm(msg)) return;
-        await st.store.deleteDoc(d.id); st.docId = null; st.work = null; st.tab = 'documents'; renderAll();
-      }),
-      'docsel-clear': () => { st.docSel.clear(); renderMain(); },
-      'delete-docs': () => run(async () => {
-        const docs = clientDocs().filter((d) => st.docSel.has(d.id));
-        if (!docs.length) return;
-        const issued = docs.filter((d) => d.issued).length;
-        if (!confirm(`Delete ${docs.length} document${docs.length > 1 ? 's' : ''} from ${client().name} permanently?${issued ? `\n\n${issued} of them ${issued > 1 ? 'have' : 'has'} been issued: version history and renewal reminders will be removed. Word files already on Google Drive are not deleted.` : ''}`)) return;
-        await st.store.deleteDocs(docs.map((d) => d.id));
-        st.docSel.clear(); renderAll(); toast(`${docs.length} document${docs.length > 1 ? 's' : ''} deleted`, 'ok');
-      }),
       'delete-client': () => run(async () => {
         const c = client();
         if (!confirm(`Delete ${c.name} and all its ${clientDocs().length} documents from the studio? Files already on Google Drive are not deleted.`)) return;
@@ -911,6 +910,8 @@
       'wf-issue': () => run(async () => { issueDialog(); }),
       'confirm-issue': () => run(confirmIssue),
       'wf-revise': reviseDialog,
+      'accept-defaults': () => { acceptDefaults(); renderMain(); toast('Defaults accepted – remember to Save', 'ok'); },
+      'accept-defaults-issue': () => run(async () => { acceptDefaults(); closeModal(); await saveDoc(true); issueDialog(); }),
       'confirm-revise': () => run(confirmRevise),
       'pb-select': () => { document.querySelectorAll('[data-pb]').forEach((cb) => { const d = docById(cb.dataset.pb); cb.checked = el.dataset.what === 'all' || (el.dataset.what === 'issued' && d && (d.status === 'Issued' || d.issued)); }); },
       'pb-generate': () => run(generatePlaybook),
@@ -946,8 +947,6 @@
 
   document.addEventListener('change', (e) => {
     const t = e.target;
-    if (t.dataset.docsel) { if (t.checked) st.docSel.add(t.dataset.docsel); else st.docSel.delete(t.dataset.docsel); renderMain(); return; }
-    if (t.hasAttribute('data-docsel-all')) { document.querySelectorAll('#main [data-docsel]').forEach((el) => { if (t.checked) st.docSel.add(el.dataset.docsel); else st.docSel.delete(el.dataset.docsel); }); renderMain(); return; }
     if (t.dataset.upload) { run(() => handleUpload(t)); return; }
     if (t.hasAttribute('data-import')) {
       run(async () => {

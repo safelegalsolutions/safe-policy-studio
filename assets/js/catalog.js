@@ -157,8 +157,8 @@
     ] },
 
     // ---------------- DATA PROTECTION AND IT ----------------
-    { id: 'DP', code: 'DP', cat: 'Data protection and IT', title: 'Data protection and privacy (DPDP Act)', items: [
-      ['dp-privacy-policy', 'Data Protection and Privacy Policy (DPDP Act 2023 and Rules 2025)', 'M'],
+    { id: 'DP', code: 'DP', cat: 'Data protection (DPDPA)', title: 'Data protection and privacy (DPDP Act)', items: [
+      ['dp-privacy-policy', 'Data Protection and Privacy Policy (DPDPA 2023 and DPDP Rules 2025)', 'M'],
       ['dp-website-notice', 'Website and app privacy notice', 'M'],
       ['dp-consent', 'Consent management and notice procedure', 'M'],
       ['dp-retention', 'Data retention and erasure schedule', 'M'],
@@ -170,8 +170,8 @@
       ['dp-cross-border', 'Cross-border data transfer', 'R', ['it', 'data', 'export']],
       ['dp-dpia', 'Data protection impact assessment (significant data fiduciary)', 'R', ['data', 'bfsi', 'healthcare']],
     ] },
-    { id: 'IT', code: 'IT', cat: 'Data protection and IT', title: 'Information security and technology', items: [
-      ['it-infosec', 'Information security policy', 'R'],
+    { id: 'IT', code: 'IT', cat: 'IT and information security', title: 'IT and information security', items: [
+      ['it-infosec', 'IT and Information Security Policy', 'M'],
       ['it-access', 'Access control and password policy', 'R'],
       ['it-logs', 'Log management and CERT-In compliance (180-day logs, 6-hour reporting)', 'M', ['it', 'data', 'bfsi', 'telecom']],
       ['it-backup', 'Backup and disaster recovery', 'R'],
@@ -203,6 +203,7 @@
       ['cg-media', 'Media and external communication', 'R'],
       ['cg-legal-hold', 'Litigation hold and legal notices handling', 'R'],
       ['cg-esg', 'ESG and sustainability', 'R'],
+      ['cg-carbon', 'Carbon footprint and climate policy', 'R'],
       ['cg-customer-grievance', 'Customer grievance redressal', 'R', ['consumer', 'bfsi', 'insurance', 'retail']],
       ['cg-fema', 'Foreign exchange (FEMA) and overseas transactions', 'R', ['export', 'bfsi']],
       ['cg-tax', 'Tax governance (GST, TDS, transfer pricing)', 'R'],
@@ -378,6 +379,22 @@
       ITEMS.push(it);
       return it;
     });
+  });
+
+  // Extra search words, so common abbreviations find the right documents
+  const KEYWORDS = [
+    [/^dp-|data protection|personal data|privacy notice|privacy policy/i, 'dpdp dpdpa dpdp act data protection privacy personal data data fiduciary'],
+    [/posh|sexual harassment/i, 'posh internal committee ic she-box'],
+    [/^ins-|irdai/i, 'irdai insurance broker broking'],
+    [/export|scomet|space|in-space/i, 'scomet export control itar ear space in-space isro'],
+    [/nda|non-disclosure/i, 'nda confidentiality'],
+    [/cert-in|logs|breach|cyber/i, 'cert-in cyber incident breach'],
+    [/^it-|information security|acceptable use|byod/i, 'it policy information technology information security cyber security infosec it security'],
+    [/whistle|vigil/i, 'whistleblower vigil mechanism'],
+    [/carbon|esg|sustainab|climate/i, 'carbon footprint climate ghg emissions net zero esg sustainability brsr green'],
+  ];
+  ITEMS.forEach((it) => {
+    it.keywords = KEYWORDS.filter(([re]) => re.test(it.id) || re.test(it.title)).map(([, k]) => k).join(' ');
   });
 
   S.CATEGORIES = [...new Set(SECTIONS.map((s) => s.cat))];
