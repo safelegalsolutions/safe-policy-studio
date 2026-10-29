@@ -1319,7 +1319,7 @@
     const b = { usdInr: Number($('#aiRate').value || 95), marginPct: Number($('#aiMargin').value || 0), gstPct: Number($('#aiGst').value || 0), aiMinFee: Number($('#aiMin').value || 0) };
     const pr = readPrices()[$('#aiModelMain').value.trim()] || readPrices()['claude-sonnet-5-5'];
     const usd = (i, o, n) => ((i * pr.in + o * pr.out) / 1e6) * n;
-    const est = (x) => Math.max(50, Math.ceil((inrBill(b, x).sub + b.aiMinFee) / 50) * 50);
+    const est = (x) => Math.max(50, Math.ceil(Math.max(inrBill(b, x).sub, b.aiMinFee) / 50) * 50);
     const light = usd(32000, 400, 20) + usd(1500, 400, 10) + usd(2500, 5000, 1);
     const heavy = usd(32000, 400, 150) + usd(1500, 400, 60) + usd(2500, 5000, 5);
     box.innerHTML = `<b>What clients will see:</b> typical AI cost ₹${est(light).toLocaleString('en-IN')} – ₹${est(heavy).toLocaleString('en-IN')} per month plus GST. About ${rupees(inrBill(b, usd(32000, 400, 1)).sub)} per question and ${rupees(inrBill(b, usd(1500, 400, 1)).sub)} per wording improvement, before GST.`;
