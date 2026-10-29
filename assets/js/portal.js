@@ -61,7 +61,7 @@
     if (!st.data) { m.innerHTML = viewLogin(); const f = $('#pin'); if (f) f.focus(); return; }
     const d = st.data;
     const openReq = d.requests.filter((r) => r.status === 'New' || r.status === 'In review').length;
-    const tabs = [['choose', 'Choose policies'], ['new', 'Request something new'], ['requests', `My requests${d.requests.length ? ' (' + d.requests.length + ')' : ''}`], ['docs', `My documents${d.docs.length ? ' (' + d.docs.length + ')' : ''}`]];
+    const tabs = [['choose', 'Choose policies'], ['new', '+ Request a new policy'], ['requests', `My requests${d.requests.length ? ' (' + d.requests.length + ')' : ''}`], ['docs', `My documents${d.docs.length ? ' (' + d.docs.length + ')' : ''}`]];
     let body = '';
     if (st.tab === 'new') body = viewNew();
     else if (st.tab === 'requests') body = viewRequests();
@@ -107,11 +107,16 @@
       <div class="row small"><label><input type="checkbox" data-f="relevantOnly" ${st.relevantOnly ? 'checked' : ''}> Show only documents relevant to ${esc(ind ? ind.name : 'your industry')}</label></div>
       <div class="row small muted" style="margin-top:6px"><span class="tag M">M</span> required by law · <span class="tag I">I</span> for your industry or regulator · <span class="tag R">R</span> recommended good practice</div>
       <div class="row" style="margin-top:10px"><button class="btn small" data-action="pick" data-what="M">Select all required by law</button><button class="btn small" data-action="pick" data-what="MI">Select required + industry</button><button class="btn small ghost" data-action="pick" data-what="none">Clear</button></div>
-      <p class="small muted" style="margin-top:8px">Can't find what you need? Use <button class="link-btn" data-action="tab" data-tab="new">Request something new</button>.</p>
+    </div>
+    <div class="request-new-banner">
+      <div><b>Can't find the policy or agreement you need?</b><div class="small">Ask SAFE Legal to draft it for you. Your request goes straight to our team.</div></div>
+      <button class="btn primary" data-action="new-from-search">+ Request a new policy</button>
     </div>`;
+    let shown = 0;
     cats.forEach((cat) => {
       const secs = S.SECTIONS.filter((s) => s.cat === cat).map((s) => ({ s, items: s.items.filter(match) })).filter((x) => x.items.length);
       if (!secs.length) return;
+      shown += secs.reduce((n, x) => n + x.items.length, 0);
       html += `<div class="lib-cat"><h3>${esc(cat)}</h3>`;
       secs.forEach(({ s, items }) => {
         const sel = items.filter((it) => st.selected.has(it.id)).length;
@@ -128,6 +133,10 @@
       });
       html += '</div>';
     });
+    if (!shown) {
+      html += `<div class="card empty"><p>No policy or agreement in our library matches${st.q ? ` "<b>${esc(st.q)}</b>"` : ''}.</p>
+        <button class="btn primary" data-action="new-from-search">Request ${st.q ? `"${esc(st.q)}"` : 'a new policy'} from SAFE Legal</button></div>`;
+    }
     return html;
   }
 
@@ -137,7 +146,7 @@
       <p class="muted small">Tell us what you need. SAFE Legal Solutions will review it and confirm.</p>
       <form data-form="custom">
         <div class="grid2">
-          <label class="field span2">Name of the policy or agreement <span class="req">*</span><input class="input" id="cTitle" maxlength="300" required placeholder="e.g. Drone operations safety policy"></label>
+          <label class="field span2">Name of the policy or agreement <span class="req">*</span><input class="input" id="cTitle" maxlength="300" required placeholder="e.g. Drone operations safety policy" value="${esc(st.prefill || '')}"></label>
           <label class="field">Type<select class="input" id="cKind"><option value="policy">Policy</option><option value="agreement">Agreement</option></select></label>
           <div></div>
           <label class="field span2">What should it cover? (purpose, who it applies to, any specific points)<textarea class="input" id="cDetails" rows="5" maxlength="4000"></textarea></label>
@@ -220,7 +229,8 @@
     });
     if (k === 'custom') {
       st.custom.push({ title: $('#cTitle').value.trim(), kind: $('#cKind').value, details: $('#cDetails').value.trim() });
-      toast('Added to your request', 'ok'); render();
+      st.prefill = '';
+      toast('Added – click "Review and submit" at the bottom to send it to SAFE Legal', 'ok'); render();
     }
     if (k === 'submit') run(submitRequest);
   });
@@ -229,7 +239,8 @@
     const el = e.target.closest('[data-action]');
     if (!el) { if (e.target.id === 'modal') closeModal(); return; }
     const a = el.dataset.action;
-    if (a === 'tab') { st.tab = el.dataset.tab; render(); window.scrollTo(0, 0); }
+    if (a === 'tab') { st.tab = el.dataset.tab; st.prefill = ''; render(); window.scrollTo(0, 0); }
+    else if (a === 'new-from-search') { st.tab = 'new'; st.prefill = st.q; render(); window.scrollTo(0, 0); const t = $('#cTitle'); if (t) t.focus(); }
     else if (a === 'close-modal') closeModal();
     else if (a === 'review') reviewDialog();
     else if (a === 'remove-custom') { st.custom.splice(+el.dataset.i, 1); render(); }
