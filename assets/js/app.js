@@ -513,6 +513,7 @@
     if (d.status === 'Advocate reviewed') actions.push(`<button class="btn gold" data-action="wf-issue">Issue v${d.issued ? esc(d.version) : '1.0'}</button>`, '<button class="btn ghost" data-action="wf" data-to="Draft">Back to draft</button>');
     if (d.status === 'Issued') actions.push('<button class="btn" data-action="wf-revise">Revise (new version)</button>', '<button class="btn ghost" data-action="wf" data-to="Archived">Archive</button>');
     if (d.status === 'Archived') actions.push('<button class="btn" data-action="wf" data-to="' + (d.issued ? 'Issued' : 'Draft') + '">Restore</button>');
+    if (!d.issued && d.status !== 'Issued') actions.push('<button class="btn danger" data-action="delete-doc" style="margin-left:auto">Delete</button>');
     const locked = d.status === 'Issued' || d.status === 'Archived';
     return `
       <div class="page-head">
@@ -860,6 +861,12 @@
       'open-client': () => { st.clientId = el.dataset.id; st.docId = null; st.work = null; st.tab = null; st.lib.selected.clear(); renderAll(); $('#main').focus(); },
       'tab': () => { st.tab = el.dataset.tab; st.docId = null; renderAll(); },
       'save-profile': () => run(() => saveProfile()),
+      'delete-doc': () => run(async () => {
+        const d = docById(st.docId);
+        if (!d || d.issued) return;
+        if (!confirm(`Delete "${d.customTitle || d.title || 'this document'}" (${d.ref || 'draft'}) from ${client().name}? It has never been issued, so nothing is kept. You can add it again from the library.`)) return;
+        await st.store.deleteDoc(d.id); st.docId = null; st.work = null; st.tab = 'documents'; renderAll();
+      }),
       'delete-client': () => run(async () => {
         const c = client();
         if (!confirm(`Delete ${c.name} and all its ${clientDocs().length} documents from the studio? Files already on Google Drive are not deleted.`)) return;
