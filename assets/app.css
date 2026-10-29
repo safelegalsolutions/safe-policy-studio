@@ -196,3 +196,4 @@ details.lib-sec > summary .sec-title { flex: 1; }
   .lib-toolbar { grid-template-columns: 1fr; }
   .preview { padding: 24px 18px; }
 }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--navy); }

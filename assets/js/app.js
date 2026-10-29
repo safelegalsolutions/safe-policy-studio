@@ -18,7 +18,7 @@
   const st = {
     store: null, db: null, clientId: null, tab: null, docId: null, work: null,
     lib: { q: '', cat: 'All', tags: { M: true, I: true, R: true }, relevantOnly: true, readyOnly: false, selected: new Set() },
-    docFilter: 'All', docQ: '', lhCache: {}, busy: false,
+    docFilter: 'All', docQ: '', docSel: new Set(), lhCache: {}, busy: false,
   };
 
   // ---------------------------------------------------------------- utilities
@@ -429,14 +429,16 @@
         <div class="chips">${statuses.map((s) => `<button class="chip ${st.docFilter === s ? 'on' : ''}" data-action="doc-filter" data-status="${s}">${s} (${count(s)})</button>`).join('')}</div>
         <input class="input" style="max-width:260px" type="search" placeholder="Search documents" value="${esc(st.docQ)}" data-docq>
       </div>
-      <div class="card" style="padding:0"><div class="table-wrap"><table class="table"><thead><tr><th>Reference</th><th>Document</th><th></th><th>Version</th><th>Status</th><th>Expiry</th><th></th></tr></thead><tbody>
+      ${(() => { const ids = new Set(all.map((d) => d.id)); [...st.docSel].forEach((id) => { if (!ids.has(id)) st.docSel.delete(id); }); return ''; })()}
+      <div class="row" style="margin-bottom:10px;min-height:34px">${st.docSel.size ? `<span class="small"><b>${st.docSel.size}</b> selected</span><button class="btn small danger" data-action="delete-docs">Delete selected (${st.docSel.size})</button><button class="btn small ghost" data-action="docsel-clear">Clear selection</button>` : '<span class="muted small">Tick documents to delete several at once.</span>'}</div>
+      <div class="card" style="padding:0"><div class="table-wrap"><table class="table"><thead><tr><th style="width:34px"><input type="checkbox" data-docsel-all title="Select all shown" ${list.length && list.every((d) => st.docSel.has(d.id)) ? 'checked' : ''}></th><th>Reference</th><th>Document</th><th></th><th>Version</th><th>Status</th><th>Expiry</th><th></th></tr></thead><tbody>
       ${list.map((d) => {
         const it = S.itemById(d.itemId) || {};
         const e = expiryInfo(d);
         const ver = d.issued && d.status !== 'Issued' && d.status !== 'Archived' ? `${esc(d.issued.version)} in force<br><span class="muted small">v${esc(d.version)} in draft</span>` : esc(d.version);
-        return `<tr><td class="small">${esc(d.ref)}</td><td><b>${esc(d.title)}</b><div class="muted small">${esc(it.sectionTitle || '')}</div></td><td><span class="tag ${it.tag}">${it.tag}</span></td><td>${ver}</td><td><span class="status ${esc(d.status)}">${esc(d.status)}</span></td><td class="${e.cls} small">${e.text}</td>
+        return `<tr><td><input type="checkbox" data-docsel="${d.id}" ${st.docSel.has(d.id) ? 'checked' : ''}></td><td class="small">${esc(d.ref)}</td><td><b>${esc(d.title)}</b><div class="muted small">${esc(it.sectionTitle || '')}</div></td><td><span class="tag ${it.tag}">${it.tag}</span></td><td>${ver}</td><td><span class="status ${esc(d.status)}">${esc(d.status)}</span></td><td class="${e.cls} small">${e.text}</td>
         <td class="row" style="flex-wrap:nowrap"><button class="btn small" data-action="open-doc" data-id="${d.id}">Open</button><button class="btn small ghost" data-action="download-doc" data-id="${d.id}" title="Download Word">⤓</button></td></tr>`;
-      }).join('') || '<tr><td colspan="7" class="muted">No documents match.</td></tr>'}
+      }).join('') || '<tr><td colspan="8" class="muted">No documents match.</td></tr>'}
       </tbody></table></div></div>`;
   }
 
@@ -513,7 +515,7 @@
     if (d.status === 'Advocate reviewed') actions.push(`<button class="btn gold" data-action="wf-issue">Issue v${d.issued ? esc(d.version) : '1.0'}</button>`, '<button class="btn ghost" data-action="wf" data-to="Draft">Back to draft</button>');
     if (d.status === 'Issued') actions.push('<button class="btn" data-action="wf-revise">Revise (new version)</button>', '<button class="btn ghost" data-action="wf" data-to="Archived">Archive</button>');
     if (d.status === 'Archived') actions.push('<button class="btn" data-action="wf" data-to="' + (d.issued ? 'Issued' : 'Draft') + '">Restore</button>');
-    if (!d.issued && d.status !== 'Issued') actions.push('<button class="btn danger" data-action="delete-doc" style="margin-left:auto">Delete</button>');
+    actions.push('<button class="btn danger" data-action="delete-doc">Delete</button>');
     const locked = d.status === 'Issued' || d.status === 'Archived';
     return `
       <div class="page-head">
@@ -858,14 +860,26 @@
       'go-home': () => { st.clientId = null; st.docId = null; st.work = null; renderAll(); },
       'new-client': newClientDialog,
       'create-client': () => run(createClient),
-      'open-client': () => { st.clientId = el.dataset.id; st.docId = null; st.work = null; st.tab = null; st.lib.selected.clear(); renderAll(); $('#main').focus(); },
+      'open-client': () => { st.clientId = el.dataset.id; st.docSel.clear(); st.docId = null; st.work = null; st.tab = null; st.lib.selected.clear(); renderAll(); $('#main').focus(); },
       'tab': () => { st.tab = el.dataset.tab; st.docId = null; renderAll(); },
       'save-profile': () => run(() => saveProfile()),
       'delete-doc': () => run(async () => {
         const d = docById(st.docId);
-        if (!d || d.issued) return;
-        if (!confirm(`Delete "${d.customTitle || d.title || 'this document'}" (${d.ref || 'draft'}) from ${client().name}? It has never been issued, so nothing is kept. You can add it again from the library.`)) return;
+        if (!d) return;
+        const msg = d.issued
+          ? `Delete "${d.title}" (${d.ref}) permanently? It has been issued (v${d.issued.version}). Its version history and renewal reminders will be removed. Word files already saved on Google Drive are not deleted.`
+          : `Delete "${d.title}" (${d.ref})? You can add it again from the library.`;
+        if (!confirm(msg)) return;
         await st.store.deleteDoc(d.id); st.docId = null; st.work = null; st.tab = 'documents'; renderAll();
+      }),
+      'docsel-clear': () => { st.docSel.clear(); renderMain(); },
+      'delete-docs': () => run(async () => {
+        const docs = clientDocs().filter((d) => st.docSel.has(d.id));
+        if (!docs.length) return;
+        const issued = docs.filter((d) => d.issued).length;
+        if (!confirm(`Delete ${docs.length} document${docs.length > 1 ? 's' : ''} from ${client().name} permanently?${issued ? `\n\n${issued} of them ${issued > 1 ? 'have' : 'has'} been issued: version history and renewal reminders will be removed. Word files already on Google Drive are not deleted.` : ''}`)) return;
+        await st.store.deleteDocs(docs.map((d) => d.id));
+        st.docSel.clear(); renderAll(); toast(`${docs.length} document${docs.length > 1 ? 's' : ''} deleted`, 'ok');
       }),
       'delete-client': () => run(async () => {
         const c = client();
@@ -932,6 +946,8 @@
 
   document.addEventListener('change', (e) => {
     const t = e.target;
+    if (t.dataset.docsel) { if (t.checked) st.docSel.add(t.dataset.docsel); else st.docSel.delete(t.dataset.docsel); renderMain(); return; }
+    if (t.hasAttribute('data-docsel-all')) { document.querySelectorAll('#main [data-docsel]').forEach((el) => { if (t.checked) st.docSel.add(el.dataset.docsel); else st.docSel.delete(el.dataset.docsel); }); renderMain(); return; }
     if (t.dataset.upload) { run(() => handleUpload(t)); return; }
     if (t.hasAttribute('data-import')) {
       run(async () => {
